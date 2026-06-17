@@ -1,1 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RRR Task Manager</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Inter', system-ui, sans-serif; background: #F8FAFC; }
+    #root { height: 100vh; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="https://accounts.google.com/gsi/client" onload="window.dispatchEvent(new Event('google-ready'))"></script>
+  <script src="https://apis.google.com/js/api.js" onload="window.gapi.load('client', function(){ window.gapi.client.init({}); })"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useCallback, useRef } = React;
+    const CLIENT_ID = "610736844681-t0p32thbogua2rtuvn7niavpnnukjbd3.apps.googleusercontent.com";
+    const FILE_NAME = "rrr_project_tasks.json";
+    const SCOPES = "https://www.googleapis.com/auth/drive.file";
+    const PROJECT_COLORS = ["#2563EB","#16A34A","#DC2626","#D97706","#7C3AED","#0891B2","#DB2777","#65A30D","#EA580C","#4F46E5"];
+    function uid() { return Math.random().toString(36).slice(2, 10); }
+    function today() { return new Date().toISOString().slice(0, 10); }
+    const DEMO = {
+      projects: [
+        { id: "p1", name: "SRFR Station 71 Trailer Remodel", color: "#2563EB", createdAt: today() },
+        { id: "p2", name: "Trailer Roof Refinishing", color: "#16A34A", createdAt: today() },
+      ],
+      tasks: [
+        { id: "t1", projectId: "p1", text: "Finalize cover page dates with client", priority: true, done: false, notes: "", createdAt: today() },
+        { id: "t2", projectId: "p1", text: "Submit permit application", priority: false, done: false, notes: "", createdAt: today() },
+        { id: "t3", projectId: "p1", text: "Order interior materials", priority: false, done: false, notes: "", createdAt: today() },
+        { id: "t4", projectId: "p2", text: "Apply first coat RX-985 silicone coating", priority: true, done: false, notes: "Use 3/4 nap roller", createdAt: today() },
+        { id: "t5", projectId: "p2", text: "Wire cup scrub remaining rust spots", priority: false, done: false, notes: "", createdAt: today() },
+      ],
+    };
+    function App() {
+      const [data, setData] = useState(null);
+      const [view, setView] = useState("week");
+      const [gapiReady, setGapiReady] = useState(false);
+      const [signedIn, setSignedIn] = useState(false);
+      const [syncStatus, setSyncStatus] = useState("idle");
+      const [modalTask, setModalTask] = useState(null);
+      const [showAddProject, setShowAddProject] = useState(false);
+      const [newProjectName, setNewProjectName] = useState("");
+      const [fileId, setFileId] = useState(null);
+      const saveTimer = useRef(null);
+      const tokenClient = useRef(null);
 
+      useEffect(() => {
+        function initGoogle() {
+          tokenClient.current = window.google.accounts.oauth2.initTokenClient({
+            client_id: CLIENT_ID, scope: SCOPES,
+            callback: (resp) => { if (resp.error) { console.error(resp); return; } setSignedIn(true); loadFromDrive(); },
+          });
+          setGapiReady(true);
+        }
+        if (window.google && window.google.accounts) { initGoogle(); }
+        else { window.addEventListener('google-ready', initGoogle, { once: true }); }
+      }, []);
+
+      async function findFile() {
+        const res = await window.gapi.client.request({ path: "https://www.googleapis.com/drive/v3/files", params: { q: `name='${FILE_NAME}' and trashed=false`, fields: "files(id)" } });
+        return res.result.files?.[0]?.id || null;
+      }
+      async function loadFromDrive() {
+        try {
+          setSyncStatus("saving");
+          const id = await findFile();
+          if (!id) { setData(DEMO); await createFile(DEMO); setSyncStatus("saved"); return; }
+          setFileId(id);
+          const res = await window.gapi.client.request({ path: `https://www.googleapis.com/drive/v3/files/${id}`, params: { alt: "media" } });
+          const parsed = typeof res.result === "string" ? JSON.parse(res.result) : res.result;
+          setData(parsed); setSyncStatus("saved");
+        } catch(e) { console.error(e); setSyncStatus("error"); setData(DEMO); }
+      }
+      async function createFile(payload) {
+        const boundary = "rrr_boundary";
+        const body = [`--${boundary}`, "Content-Type: application/json; charset=UTF-8", "", JSON.stringify({ name: FILE_NAME, mimeType: "application/json" }), `--${boundary}`, "Content-Type: application/json", "", JSON.stringify(payload), `--${boundary}--`].join("\r\n");
+        const res = await window.gapi.client.request({ path: "https://www.googleapis.com/upload/drive/v3/files", method: "POST", params: { uploadType: "multipart" }, headers: { "Content-Type": `multipart/related; boundary=${boundary}` }, body });
+        setFileId(res.result.id);
+      }
+      async function saveFile(payload, id) {
+        await window.gapi.client.request({ path: `https://www.googleapis.com/upload/drive/v3/files/${id}`, method: "PATCH", params: { uploadType: "media" }, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      }
+      const scheduleSave = useCallback((payload) => {
+        if (!signedIn) return;
+        clearTimeout(saveTimer.current); setSyncStatus("saving");
+        saveTimer.current = setTimeout(async () => {
+          try { const id = fileId || await findFile(); if (id) { await saveFile(payload, id); if (!fileId) setFileId(id); } else { await createFile(payload); } setSyncStatus("saved"); }
+          catch(e) { console.error(e); setSyncStatus("error"); }
+        }, 1200);
+      }, [signedIn, fileId]);
+
+      function updateData(fn) { setData(prev => { const next = fn(prev); scheduleSave(next); return next; }); }
+      function addTask(projectId, text, asPriority = false) {
+        if (!text.trim() || !projectId) return;
+        updateData(d => ({ ...d, tasks: [...d.tasks, { id: uid(), projectId, text: text.trim(), priority: asPriority, done: false, notes: "", createdAt: today() }] }));
+      }
+      function toggleDone(id) { updateData(d => ({ ...d, tasks: d.tasks.map(t => t.id === id ? { ...t, done: !t.done } : t) })); }
+      function togglePriority(id) { updateData(d => ({ ...d, tasks: d.tasks.map(t => t.id === id ? { ...t, priority: !t.priority } : t) })); }
+      function saveTask(updated) { updateData(d => ({ ...d, tasks: d.tasks.map(t => t.id === updated.id ? updated : t) })); setModalTask(null); }
+      function deleteTask(id) { updateData(d => ({ ...d, tasks: d.tasks.filter(t => t.id !== id) })); setModalTask(null); }
+      function addProject(name) {
+        if (!name.trim()) return;
+        const p = { id: uid(), name: name.trim(), color: PROJECT_COLORS[data.projects.length % PROJECT_COLORS.length], createdAt: today() };
+        updateData(d => ({ ...d, projects: [...d.projects, p] }));
+        setShowAddProject(false); setNewProjectName(""); setView(p.id);
+      }
+
+      const priorityTasks = data ? data.tasks.filter(t => t.priority && !t.done) : [];
+      const projectMap = data ? Object.fromEntries(data.projects.map(p => [p.id, p])) : {};
+      const syncLabel = { idle: "", saving: "Saving…", saved: "Saved ✓", error: "Save failed" }[syncStatus];
+      const syncColor = { idle: "#94A3B8", saving: "#F59E0B", saved: "#16A34A", error: "#DC2626" }[syncStatus];
+
+      function TaskRow({ task, showProject = false }) {
+        const proj = projectMap[task.projectId];
+        return (
+          <div style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"10px 12px", background:"#fff", borderRadius:8, border:"1px solid #E2E8F0", opacity: task.done ? 0.45 : 1, marginBottom:1 }}>
+            <button style={{ background:"none", border:"none", cursor:"pointer", padding:0, marginTop:2, flexShrink:0 }} onClick={() => toggleDone(task.id)}>
+              <div style={{ width:16, height:16, borderRadius:4, border:`2px solid ${task.done ? "#2563EB" : "#CBD5E1"}`, background: task.done ? "#2563EB" : "transparent", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                {task.done && <svg width="10" height="8" viewBox="0 0 10 8"><path d="M1 4l3 3 5-6" stroke="#fff" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+              </div>
+            </button>
+            <div style={{ flex:1, minWidth:0 }} onClick={() => setModalTask({ ...task })}>
+              <div style={{ fontSize:14, color:"#1E293B", lineHeight:1.4, textDecoration: task.done ? "line-through" : "none" }}>{task.text}</div>
+              {showProject && proj && <div style={{ display:"flex", alignItems:"center", gap:4, marginTop:2 }}><div style={{ width:8, height:8, borderRadius:"50%", background:proj.color }} /><span style={{ fontSize:11, color:"#94A3B8" }}>{proj.name}</span></div>}
+              {task.notes && <div style={{ fontSize:11, color:"#64748B", marginTop:2 }}>{task.notes}</div>}
+            </div>
+            <button style={{ background:"none", border:"none", cursor:"pointer", fontSize:16, padding:"0 2px", flexShrink:0, color: task.priority ? "#F59E0B" : "#CBD5E1" }} onClick={() => togglePriority(task.id)}>★</button>
+          </div>
+        );
+      }
+
+      function AddTaskBar({ defaultProjectId, asPriority = false }) {
+        const [text, setText] = useState("");
+        const [projId, setProjId] = useState(defaultProjectId || (data && data.projects[0]?.id) || "");
+        function submit() { if (!text.trim()) return; addTask(projId, text, asPriority); setText(""); }
+        return (
+          <div style={{ display:"flex", gap:8, marginTop:12 }}>
+            <input style={{ flex:1, padding:"8px 12px", borderRadius:8, border:"1px solid #E2E8F0", fontSize:14, background:"#fff", outline:"none" }} placeholder="Add task…" value={text} onChange={e => setText(e.target.value)} onKeyDown={e => e.key === "Enter" && submit()} />
+            {asPriority && data && <select style={{ padding:"8px 10px", borderRadius:8, border:"1px solid #E2E8F0", fontSize:13, background:"#fff", color:"#334155", maxWidth:180 }} value={projId} onChange={e => setProjId(e.target.value)}>{data.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}
+            <button style={{ padding:"8px 14px", borderRadius:8, background:"#2563EB", color:"#fff", border:"none", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={submit}>+ Add</button>
+          </div>
+        );
+      }
+
+      if (!signedIn) return (
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh", background:"#F8FAFC" }}>
+          <div style={{ background:"#fff", borderRadius:16, padding:40, width:340, boxShadow:"0 8px 40px rgba(0,0,0,.1)", display:"flex", flexDirection:"column", alignItems:"center" }}>
+            <div style={{ fontSize:28, fontWeight:900, color:"#2563EB", letterSpacing:2, marginBottom:8 }}>RRR</div>
+            <h1 style={{ fontSize:20, fontWeight:700, margin:"0 0 4px" }}>Project Task Manager</h1>
+            <p style={{ fontSize:13, color:"#64748B", margin:"0 0 16px" }}>Renewal Remodeling &amp; Repairs</p>
+            <p style={{ fontSize:13, color:"#94A3B8", textAlign:"center", marginBottom:20, lineHeight:1.5 }}>Sign in with your Google account to load and sync your projects across all devices.</p>
+            <button style={{ display:"flex", alignItems:"center", padding:"10px 20px", background:"#fff", border:"1px solid #E2E8F0", borderRadius:8, fontSize:14, fontWeight:500, cursor:"pointer", boxShadow:"0 1px 4px rgba(0,0,0,.08)" }} onClick={() => gapiReady && tokenClient.current?.requestAccessToken()}>
+              <svg width="18" height="18" viewBox="0 0 18 18" style={{ marginRight:8 }}><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332C2.438 15.983 5.482 18 9 18z"/><path fill="#FBBC05" d="M3.964 10.707c-.18-.54-.282-1.117-.282-1.707s.102-1.167.282-1.707V4.961H.957C.347 6.175 0 7.55 0 9s.348 2.825.957 4.039l3.007-2.332z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0 5.482 0 2.438 2.017.957 4.961L3.964 7.293C4.672 5.163 6.656 3.58 9 3.58z"/></svg>
+              Sign in with Google
+            </button>
+            <p style={{ fontSize:11, color:"#94A3B8", marginTop:16 }}>michaeltatham1@gmail.com</p>
+          </div>
+        </div>
+      );
+
+      if (!data) return <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh" }}><p>Loading…</p></div>;
+
+      return (
+        <div style={{ display:"flex", height:"100vh", fontFamily:"'Inter', system-ui, sans-serif", background:"#F8FAFC", color:"#1E293B" }}>
+          <aside style={{ width:220, background:"#0F172A", display:"flex", flexDirection:"column", flexShrink:0, overflowY:"auto" }}>
+            <div style={{ padding:"20px 16px 12px" }}>
+              <div style={{ fontSize:18, fontWeight:800, color:"#2563EB", letterSpacing:1 }}>RRR</div>
+              <div style={{ fontSize:10, color:"#475569", letterSpacing:1, textTransform:"uppercase", marginTop:2 }}>Task Manager</div>
+            </div>
+            <nav style={{ flex:1, padding:"4px 8px" }}>
+              <button style={{ display:"flex", alignItems:"center", gap:8, width:"100%", padding:"7px 10px", borderRadius:6, border:"none", background: view==="week" ? "#1E293B" : "transparent", color: view==="week" ? "#F1F5F9" : "#94A3B8", fontSize:13, cursor:"pointer" }} onClick={() => setView("week")}>
+                <span>★</span> This Week {priorityTasks.length > 0 && <span style={{ marginLeft:"auto", background:"#2563EB", color:"#fff", fontSize:10, fontWeight:700, borderRadius:10, padding:"1px 6px" }}>{priorityTasks.length}</span>}
+              </button>
+              <button style={{ display:"flex", alignItems:"center", gap:8, width:"100%", padding:"7px 10px", borderRadius:6, border:"none", background: view==="projects" ? "#1E293B" : "transparent", color: view==="projects" ? "#F1F5F9" : "#94A3B8", fontSize:13, cursor:"pointer" }} onClick={() => setView("projects")}>
+                <span>⊞</span> All Projects
+              </button>
+              <div style={{ fontSize:9, color:"#334155", letterSpacing:1.5, textTransform:"uppercase", padding:"16px 10px 6px" }}>PROJECTS</div>
+              {data.projects.map(p => (
+                <button key={p.id} style={{ display:"flex", alignItems:"center", gap:8, width:"100%", padding:"7px 10px", borderRadius:6, border:"none", background: view===p.id ? "#1E293B" : "transparent", color: view===p.id ? "#F1F5F9" : "#94A3B8", fontSize:13, cursor:"pointer" }} onClick={() => setView(p.id)}>
+                  <div style={{ width:8, height:8, borderRadius:"50%", background:p.color, flexShrink:0 }} />
+                  <span style={{ flex:1, textAlign:"left", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.name}</span>
+                </button>
+              ))}
+              <button style={{ display:"block", width:"100%", marginTop:8, padding:"7px 10px", borderRadius:6, border:"1px dashed #334155", background:"transparent", color:"#475569", fontSize:12, cursor:"pointer", textAlign:"left" }} onClick={() => setShowAddProject(true)}>+ New Project</button>
+            </nav>
+            <div style={{ padding:"12px 16px", borderTop:"1px solid #1E293B" }}>
+              <div style={{ color:syncColor, fontSize:11 }}>{syncLabel}</div>
+              <div style={{ color:"#64748B", fontSize:10, marginTop:2 }}>michaeltatham1@gmail.com</div>
+            </div>
+          </aside>
+
+          <main style={{ flex:1, overflowY:"auto", padding:"24px 28px" }}>
+            {view === "week" && (
+              <div>
+                <h2 style={{ fontSize:22, fontWeight:700, margin:"0 0 4px", color:"#0F172A" }}>This Week</h2>
+                <p style={{ fontSize:13, color:"#64748B", marginBottom:20 }}>{priorityTasks.length} priority tasks</p>
+                {priorityTasks.length === 0 ? <div style={{ textAlign:"center", padding:"40px 20px" }}><div style={{ fontSize:32, color:"#E2E8F0", marginBottom:12 }}>★</div><p style={{ color:"#64748B" }}>No priority tasks yet. Star any task to add it here.</p></div>
+                  : priorityTasks.map(t => <TaskRow key={t.id} task={t} showProject />)}
+                <AddTaskBar asPriority />
+              </div>
+            )}
+            {view === "projects" && (
+              <div>
+                <h2 style={{ fontSize:22, fontWeight:700, margin:"0 0 20px", color:"#0F172A" }}>All Projects</h2>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(200px, 1fr))", gap:12 }}>
+                  {data.projects.map(p => {
+                    const pt = data.tasks.filter(t => t.projectId === p.id);
+                    const pri = pt.filter(t => t.priority && !t.done).length;
+                    return <div key={p.id} style={{ background:"#fff", border:"1px solid #E2E8F0", borderTop:`3px solid ${p.color}`, borderRadius:8, padding:"14px 16px", cursor:"pointer" }} onClick={() => setView(p.id)}>
+                      <div style={{ fontSize:14, fontWeight:600, color:"#1E293B", marginBottom:8 }}>{p.name}</div>
+                      <div style={{ display:"flex", gap:10, fontSize:12, color:"#64748B" }}>
+                        <span>{pt.length} tasks</span>
+                        <span>{pt.filter(t=>t.done).length} done</span>
+                        {pri > 0 && <span style={{ color:"#F59E0B" }}>★ {pri}</span>}
+                      </div>
+                    </div>;
+                  })}
+                  <div style={{ background:"#F8FAFC", border:"1px dashed #CBD5E1", borderRadius:8, padding:"14px 16px", cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", minHeight:90 }} onClick={() => setShowAddProject(true)}>
+                    <span style={{ fontSize:24, color:"#CBD5E1" }}>+</span>
+                    <span style={{ fontSize:13, color:"#94A3B8" }}>New Project</span>
+                  </div>
+                </div>
+              </div>
+            )}
+            {view !== "week" && view !== "projects" && (() => {
+              const proj = projectMap[view];
+              if (!proj) return <div>Project not found.</div>;
+              const tasks = data.tasks.filter(t => t.projectId === view);
+              const open = tasks.filter(t => !t.done);
+              const closed = tasks.filter(t => t.done);
+              return <div>
+                <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:20 }}>
+                  <div style={{ width:14, height:14, borderRadius:"50%", background:proj.color }} />
+                  <div><h2 style={{ fontSize:22, fontWeight:700, margin:0, color:"#0F172A" }}>{proj.name}</h2><p style={{ fontSize:13, color:"#64748B" }}>{open.length} open · {closed.length} done</p></div>
+                </div>
+                {open.map(t => <TaskRow key={t.id} task={t} />)}
+                {open.length === 0 && <p style={{ color:"#94A3B8", textAlign:"center", padding:"20px 0" }}>No open tasks. Add one below.</p>}
+                <AddTaskBar defaultProjectId={view} />
+                {closed.length > 0 && <details style={{ marginTop:24 }}><summary style={{ fontSize:13, color:"#94A3B8", cursor:"pointer" }}>Completed ({closed.length})</summary><div style={{ marginTop:8 }}>{closed.map(t => <TaskRow key={t.id} task={t} />)}</div></details>}
+              </div>;
+            })()}
+          </main>
+
+          {modalTask && (
+            <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.4)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100 }} onClick={e => e.target === e.currentTarget && setModalTask(null)}>
+              <div style={{ background:"#fff", borderRadius:12, padding:24, width:"90%", maxWidth:480, boxShadow:"0 20px 60px rgba(0,0,0,.2)" }}>
+                <h3 style={{ fontSize:16, fontWeight:700, margin:"0 0 16px" }}>Edit Task</h3>
+                <label style={{ display:"block", fontSize:12, fontWeight:600, color:"#64748B", marginBottom:4 }}>Task</label>
+                <input style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:"1px solid #E2E8F0", fontSize:14, boxSizing:"border-box" }} value={modalTask.text} onChange={e => setModalTask({...modalTask, text: e.target.value})} />
+                <label style={{ display:"block", fontSize:12, fontWeight:600, color:"#64748B", margin:"12px 0 4px" }}>Project</label>
+                <select style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:"1px solid #E2E8F0", fontSize:14, boxSizing:"border-box" }} value={modalTask.projectId} onChange={e => setModalTask({...modalTask, projectId: e.target.value})}>
+                  {data.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+                <label style={{ display:"block", fontSize:12, fontWeight:600, color:"#64748B", margin:"12px 0 4px" }}>Notes</label>
+                <textarea style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:"1px solid #E2E8F0", fontSize:14, boxSizing:"border-box", height:72, resize:"vertical" }} value={modalTask.notes} onChange={e => setModalTask({...modalTask, notes: e.target.value})} />
+                <label style={{ display:"flex", alignItems:"center", gap:8, fontSize:12, fontWeight:600, color:"#64748B", margin:"12px 0 0", cursor:"pointer" }}>
+                  <input type="checkbox" checked={modalTask.priority} onChange={e => setModalTask({...modalTask, priority: e.target.checked})} /> ★ Include in This Week
+                </label>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:20 }}>
+                  <button style={{ padding:"8px 14px", background:"#FEF2F2", color:"#DC2626", border:"none", borderRadius:8, fontSize:13, cursor:"pointer" }} onClick={() => { if(confirm("Delete this task?")) deleteTask(modalTask.id); }}>Delete</button>
+                  <div style={{ display:"flex", gap:8 }}>
+                    <button style={{ padding:"8px 14px", background:"#F1F5F9", color:"#475569", border:"none", borderRadius:8, fontSize:13, cursor:"pointer" }} onClick={() => setModalTask(null)}>Cancel</button>
+                    <button style={{ padding:"8px 18px", background:"#2563EB", color:"#fff", border:"none", borderRadius:8, fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={() => saveTask(modalTask)}>Save</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showAddProject && (
+            <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.4)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100 }} onClick={e => e.target === e.currentTarget && setShowAddProject(false)}>
+              <div style={{ background:"#fff", borderRadius:12, padding:24, width:"90%", maxWidth:400, boxShadow:"0 20px 60px rgba(0,0,0,.2)" }}>
+                <h3 style={{ fontSize:16, fontWeight:700, margin:"0 0 16px" }}>New Project</h3>
+                <label style={{ display:"block", fontSize:12, fontWeight:600, color:"#64748B", marginBottom:4 }}>Project Name</label>
+                <input style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:"1px solid #E2E8F0", fontSize:14, boxSizing:"border-box" }} placeholder="e.g. Agarwal Kitchen Remodel" value={newProjectName} onChange={e => setNewProjectName(e.target.value)} onKeyDown={e => e.key === "Enter" && addProject(newProjectName)} autoFocus />
+                <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:20 }}>
+                  <button style={{ padding:"8px 14px", background:"#F1F5F9", color:"#475569", border:"none", borderRadius:8, fontSize:13, cursor:"pointer" }} onClick={() => setShowAddProject(false)}>Cancel</button>
+                  <button style={{ padding:"8px 18px", background:"#2563EB", color:"#fff", border:"none", borderRadius:8, fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={() => addProject(newProjectName)}>Create</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
