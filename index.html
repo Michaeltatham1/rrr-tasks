@@ -51,6 +51,9 @@ function App(){
   const [modalTask,setModalTask] = React.useState(null);
   const [showAddProject,setShowAddProject] = React.useState(false);
   const [newProjectName,setNewProjectName] = React.useState("");
+  const [showImport,setShowImport] = React.useState(false);
+  const [importText,setImportText] = React.useState("");
+  const [importProjectName,setImportProjectName] = React.useState("");
   const fileIdRef = React.useRef(null);
   const saveTimer = React.useRef(null);
   const tokenClient = React.useRef(null);
@@ -61,9 +64,13 @@ function App(){
     function initGoogle(){
       tokenClient.current = window.google.accounts.oauth2.initTokenClient({
         client_id:CLIENT_ID, scope:SCOPES,
-        callback:(resp)=>{ if(resp.error){console.error(resp);return;} setSignedIn(true); loadFromDrive(); }
+        callback:(resp)=>{ if(resp.error){console.error(resp);return;} localStorage.setItem("rrr_was_signed_in","true"); setSignedIn(true); loadFromDrive(); }
       });
       setGapiReady(true);
+      // Try silent auto sign-in (no popup) if user signed in before on this device
+      if(localStorage.getItem("rrr_was_signed_in")==="true"){
+        tokenClient.current.requestAccessToken({prompt:""});
+      }
     }
     const interval = setInterval(()=>{
       if(window.gapi && !window.gapi.client){ initGapi(); }
@@ -126,6 +133,27 @@ function App(){
   function deleteProject(id){
     updateData(d=>({projects:d.projects.filter(p=>p.id!==id),tasks:d.tasks.filter(t=>t.projectId!==id)}));
     setView("projects");
+  }
+  function importTasks(projectName,text){
+    if(!text.trim())return;
+    const lines = text.split("\n").map(l=>l.trim()).filter(l=>l.length>0);
+    updateData(d=>{
+      let projects = d.projects;
+      let proj = projects.find(p=>p.name.toLowerCase()===projectName.trim().toLowerCase());
+      if(!proj && projectName.trim()){
+        proj = {id:uid(),name:projectName.trim(),color:COLORS[projects.length%COLORS.length],createdAt:today()};
+        projects = [...projects,proj];
+      }
+      if(!proj) return d;
+      const newTasks = lines.map(line=>{
+        let clean = line.replace(/^[-*]\s*\[\s*[xX]?\s*\]\s*/,"").replace(/^[-*•]\s*/,"").trim();
+        const isPriority = /\(priority\)|★|\*priority\*/i.test(clean);
+        clean = clean.replace(/\(priority\)|★|\*priority\*/gi,"").trim();
+        return {id:uid(),projectId:proj.id,text:clean,priority:isPriority,done:false,notes:"",createdAt:today()};
+      }).filter(t=>t.text.length>0);
+      return {projects,tasks:[...d.tasks,...newTasks]};
+    });
+    setShowImport(false); setImportText(""); setImportProjectName("");
   }
 
   const projectMap = data?Object.fromEntries(data.projects.map(p=>[p.id,p])):{};
@@ -193,7 +221,7 @@ function App(){
   const isProjectView = view!=="week"&&view!=="projects";
   const topNav = e("div",{style:{background:"#0F172A",padding:"0 16px",display:"flex",alignItems:"center",gap:4,position:"sticky",top:0,zIndex:10}},
     e("button",{style:{padding:"14px 16px",border:"none",background:"transparent",color:view==="week"?"#fff":"#64748B",fontSize:14,fontWeight:view==="week"?700:400,cursor:"pointer",borderBottom:view==="week"?"2px solid #2563EB":"2px solid transparent"},onClick:()=>setView("week")},
-      "★ This Week"+(priorityCount>0?" ("+priorityCount+")":"")
+      "★ Front Burner"+(priorityCount>0?" ("+priorityCount+")":"")
     ),
     e("button",{style:{padding:"14px 16px",border:"none",background:"transparent",color:(view==="projects"||isProjectView)?"#fff":"#64748B",fontSize:14,fontWeight:(view==="projects"||isProjectView)?700:400,cursor:"pointer",borderBottom:(view==="projects"||isProjectView)?"2px solid #2563EB":"2px solid transparent"},onClick:()=>setView("projects")},
       "Projects"
@@ -211,7 +239,7 @@ function App(){
     })).filter(g=>g.tasks.length>0);
 
     mainContent = e("div",{style:{padding:"16px"}},
-      e("h2",{style:{fontSize:20,fontWeight:700,color:"#0F172A",marginBottom:4}},"This Week"),
+      e("h2",{style:{fontSize:20,fontWeight:700,color:"#0F172A",marginBottom:4}},"Front Burner"),
       e("p",{style:{fontSize:13,color:"#64748B",marginBottom:20}},priorityCount+" priority task"+(priorityCount!==1?"s":"")+" across "+projectsWithPriority.length+" project"+(projectsWithPriority.length!==1?"s":"")),
 
       priorityCount===0&&e("div",{style:{textAlign:"center",padding:"40px 20px",color:"#94A3B8"}},
@@ -240,9 +268,12 @@ function App(){
   // ── Projects list view ───────────────────────────────────────────────────
   } else if(view==="projects"){
     mainContent = e("div",{style:{padding:"16px"}},
-      e("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}},
+      e("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:8}},
         e("h2",{style:{fontSize:20,fontWeight:700,color:"#0F172A"}},"Projects"),
-        e("button",{style:{padding:"8px 14px",background:"#2563EB",color:"#fff",border:"none",borderRadius:8,fontSize:13,fontWeight:600,cursor:"pointer"},onClick:()=>setShowAddProject(true)},"+ New Project")
+        e("div",{style:{display:"flex",gap:8}},
+          e("button",{style:{padding:"8px 14px",background:"#F1F5F9",color:"#334155",border:"none",borderRadius:8,fontSize:13,fontWeight:600,cursor:"pointer"},onClick:()=>setShowImport(true)},"📋 Import Plan"),
+          e("button",{style:{padding:"8px 14px",background:"#2563EB",color:"#fff",border:"none",borderRadius:8,fontSize:13,fontWeight:600,cursor:"pointer"},onClick:()=>setShowAddProject(true)},"+ New Project")
+        )
       ),
       data.projects.length===0&&e("div",{style:{textAlign:"center",padding:"40px 20px",color:"#94A3B8"}},
         e("p",{style:{fontSize:15}},"No projects yet."),
@@ -316,7 +347,7 @@ function App(){
       e("textarea",{style:{width:"100%",padding:"10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:15,boxSizing:"border-box",height:80,resize:"vertical",fontFamily:"inherit"},value:modalTask.notes,onChange:ev=>setModalTask({...modalTask,notes:ev.target.value})}),
       e("label",{style:{display:"flex",alignItems:"center",gap:8,fontSize:13,color:"#64748B",margin:"12px 0 0",cursor:"pointer"}},
         e("input",{type:"checkbox",checked:modalTask.priority,onChange:ev=>setModalTask({...modalTask,priority:ev.target.checked})}),
-        "★ Include in This Week"
+        "★ Include in Front Burner"
       ),
       e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:20}},
         e("button",{style:{padding:"10px 14px",background:"#FEF2F2",color:"#DC2626",border:"none",borderRadius:8,fontSize:14,cursor:"pointer"},onClick:()=>{if(confirm("Delete this task?"))deleteTask(modalTask.id);}},"Delete"),
@@ -341,7 +372,23 @@ function App(){
     )
   );
 
-  return e("div",null, topNav, mainContent, modal, addProjectModal);
+  // ── Import plan modal ────────────────────────────────────────────────────
+  const importModal = showImport&&e("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:16},onClick:ev=>ev.target===ev.currentTarget&&setShowImport(false)},
+    e("div",{style:{background:"#fff",borderRadius:12,padding:24,width:"100%",maxWidth:520,boxShadow:"0 20px 60px rgba(0,0,0,.2)"}},
+      e("h3",{style:{fontSize:16,fontWeight:700,margin:"0 0 8px"}},"Import Project Plan"),
+      e("p",{style:{fontSize:13,color:"#64748B",margin:"0 0 16px"}},"Paste a task list from Claude. Use a new line per task. Mark priority tasks with (priority) or ★."),
+      e("label",{style:{display:"block",fontSize:12,fontWeight:600,color:"#64748B",marginBottom:4}},"Project Name"),
+      e("input",{style:{width:"100%",padding:"10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:15,boxSizing:"border-box"},placeholder:"e.g. Agarwal Kitchen Remodel — type existing or new name",value:importProjectName,onChange:ev=>setImportProjectName(ev.target.value)}),
+      e("label",{style:{display:"block",fontSize:12,fontWeight:600,color:"#64748B",margin:"12px 0 4px"}},"Tasks (one per line)"),
+      e("textarea",{style:{width:"100%",padding:"10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:14,boxSizing:"border-box",height:160,resize:"vertical",fontFamily:"inherit"},placeholder:"Submit permit application\nOrder cabinets from supplier\n★ Call client to confirm start date (priority)",value:importText,onChange:ev=>setImportText(ev.target.value)}),
+      e("div",{style:{display:"flex",justifyContent:"flex-end",gap:8,marginTop:20}},
+        e("button",{style:{padding:"10px 14px",background:"#F1F5F9",color:"#475569",border:"none",borderRadius:8,fontSize:14,cursor:"pointer"},onClick:()=>setShowImport(false)},"Cancel"),
+        e("button",{style:{padding:"10px 18px",background:"#2563EB",color:"#fff",border:"none",borderRadius:8,fontSize:14,fontWeight:600,cursor:"pointer"},onClick:()=>importTasks(importProjectName,importText)},"Import")
+      )
+    )
+  );
+
+  return e("div",null, topNav, mainContent, modal, addProjectModal, importModal);
 }
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
