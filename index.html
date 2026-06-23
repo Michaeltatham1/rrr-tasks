@@ -30,15 +30,15 @@ function uid(){ return Math.random().toString(36).slice(2,10); }
 function today(){ return new Date().toISOString().slice(0,10); }
 const DEMO = {
   projects:[
-    {id:"p1",name:"SRFR Station 71 Trailer Remodel",color:"#2563EB",createdAt:today()},
-    {id:"p2",name:"Trailer Roof Refinishing",color:"#16A34A",createdAt:today()}
+    {id:"p1",name:"SRFR Station 71 Trailer Remodel",color:"#2563EB",createdAt:today(),order:0},
+    {id:"p2",name:"Trailer Roof Refinishing",color:"#16A34A",createdAt:today(),order:1}
   ],
   tasks:[
-    {id:"t1",projectId:"p1",text:"Finalize cover page dates with client",priority:true,done:false,notes:"",createdAt:today()},
-    {id:"t2",projectId:"p1",text:"Submit permit application",priority:false,done:false,notes:"",createdAt:today()},
-    {id:"t3",projectId:"p1",text:"Order interior materials",priority:false,done:false,notes:"",createdAt:today()},
-    {id:"t4",projectId:"p2",text:"Apply first coat RX-985 silicone coating",priority:true,done:false,notes:"Use 3/4 nap roller",createdAt:today()},
-    {id:"t5",projectId:"p2",text:"Wire cup scrub remaining rust spots",priority:false,done:false,notes:"",createdAt:today()}
+    {id:"t1",projectId:"p1",text:"Finalize cover page dates with client",priority:true,done:false,notes:"",createdAt:today(),order:0,priorityOrder:0},
+    {id:"t2",projectId:"p1",text:"Submit permit application",priority:false,done:false,notes:"",createdAt:today(),order:1,priorityOrder:0},
+    {id:"t3",projectId:"p1",text:"Order interior materials",priority:false,done:false,notes:"",createdAt:today(),order:2,priorityOrder:0},
+    {id:"t4",projectId:"p2",text:"Apply first coat RX-985 silicone coating",priority:true,done:false,notes:"Use 3/4 nap roller",createdAt:today(),order:0,priorityOrder:1},
+    {id:"t5",projectId:"p2",text:"Wire cup scrub remaining rust spots",priority:false,done:false,notes:"",createdAt:today(),order:1,priorityOrder:0}
   ]
 };
 
@@ -118,15 +118,39 @@ function App(){
   // ── CRUD ─────────────────────────────────────────────────────────────────
   function addTask(projectId,text,asPriority=false){
     if(!text.trim()||!projectId)return;
-    updateData(d=>({...d,tasks:[...d.tasks,{id:uid(),projectId,text:text.trim(),priority:asPriority,done:false,notes:"",createdAt:today()}]}));
+    updateData(d=>{
+      const maxOrder = Math.max(-1,...d.tasks.filter(t=>t.projectId===projectId).map(t=>t.order||0));
+      const maxPriOrder = Math.max(-1,...d.tasks.filter(t=>t.priority&&!t.done).map(t=>t.priorityOrder||0));
+      return {...d,tasks:[...d.tasks,{id:uid(),projectId,text:text.trim(),priority:asPriority,done:false,notes:"",createdAt:today(),order:maxOrder+1,priorityOrder:asPriority?maxPriOrder+1:0}]};
+    });
   }
   function toggleDone(id){ updateData(d=>({...d,tasks:d.tasks.map(t=>t.id===id?{...t,done:!t.done}:t)})); }
-  function togglePriority(id){ updateData(d=>({...d,tasks:d.tasks.map(t=>t.id===id?{...t,priority:!t.priority}:t)})); }
+  function togglePriority(id){
+    updateData(d=>{
+      const t = d.tasks.find(x=>x.id===id);
+      if(!t)return d;
+      if(!t.priority){
+        const maxPriOrder = Math.max(-1,...d.tasks.filter(x=>x.priority&&!x.done).map(x=>x.priorityOrder||0));
+        return {...d,tasks:d.tasks.map(x=>x.id===id?{...x,priority:true,priorityOrder:maxPriOrder+1}:x)};
+      }
+      return {...d,tasks:d.tasks.map(x=>x.id===id?{...x,priority:false}:x)};
+    });
+  }
+  function reorderProjects(newOrderIds){
+    updateData(d=>({...d,projects:d.projects.map(p=>({...p,order:newOrderIds.indexOf(p.id)}))}));
+  }
+  function reorderProjectTasks(projectId,newOrderIds){
+    updateData(d=>({...d,tasks:d.tasks.map(t=>t.projectId===projectId?{...t,order:newOrderIds.indexOf(t.id)}:t)}));
+  }
+  function reorderFrontBurner(newOrderIds){
+    updateData(d=>({...d,tasks:d.tasks.map(t=>newOrderIds.includes(t.id)?{...t,priorityOrder:newOrderIds.indexOf(t.id)}:t)}));
+  }
   function saveTask(updated){ updateData(d=>({...d,tasks:d.tasks.map(t=>t.id===updated.id?updated:t)})); setModalTask(null); }
   function deleteTask(id){ updateData(d=>({...d,tasks:d.tasks.filter(t=>t.id!==id)})); setModalTask(null); }
   function addProject(name){
     if(!name.trim())return;
-    const p={id:uid(),name:name.trim(),color:COLORS[data.projects.length%COLORS.length],createdAt:today()};
+    const maxOrder = Math.max(-1,...data.projects.map(p=>p.order||0));
+    const p={id:uid(),name:name.trim(),color:COLORS[data.projects.length%COLORS.length],createdAt:today(),order:maxOrder+1};
     updateData(d=>({...d,projects:[...d.projects,p]}));
     setShowAddProject(false); setNewProjectName(""); setView(p.id);
   }
@@ -141,15 +165,20 @@ function App(){
       let projects = d.projects;
       let proj = projects.find(p=>p.name.toLowerCase()===projectName.trim().toLowerCase());
       if(!proj && projectName.trim()){
-        proj = {id:uid(),name:projectName.trim(),color:COLORS[projects.length%COLORS.length],createdAt:today()};
+        const maxOrder = Math.max(-1,...projects.map(p=>p.order||0));
+        proj = {id:uid(),name:projectName.trim(),color:COLORS[projects.length%COLORS.length],createdAt:today(),order:maxOrder+1};
         projects = [...projects,proj];
       }
       if(!proj) return d;
-      const newTasks = lines.map(line=>{
+      const baseOrder = Math.max(-1,...d.tasks.filter(t=>t.projectId===proj.id).map(t=>t.order||0))+1;
+      const maxPriOrder = Math.max(-1,...d.tasks.filter(x=>x.priority&&!x.done).map(x=>x.priorityOrder||0));
+      let priCounter = maxPriOrder;
+      const newTasks = lines.map((line,i)=>{
         let clean = line.replace(/^[-*]\s*\[\s*[xX]?\s*\]\s*/,"").replace(/^[-*•]\s*/,"").trim();
         const isPriority = /\(priority\)|★|\*priority\*/i.test(clean);
         clean = clean.replace(/\(priority\)|★|\*priority\*/gi,"").trim();
-        return {id:uid(),projectId:proj.id,text:clean,priority:isPriority,done:false,notes:"",createdAt:today()};
+        if(isPriority) priCounter++;
+        return {id:uid(),projectId:proj.id,text:clean,priority:isPriority,done:false,notes:"",createdAt:today(),order:baseOrder+i,priorityOrder:isPriority?priCounter:0};
       }).filter(t=>t.text.length>0);
       return {projects,tasks:[...d.tasks,...newTasks]};
     });
@@ -187,19 +216,54 @@ function App(){
   if(!data){ return e("div",{style:{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}},"Loading…"); }
 
   // ── Task row ─────────────────────────────────────────────────────────────
-  function TaskRow({task}){
-    return e("div",{style:{display:"flex",alignItems:"flex-start",gap:10,padding:"11px 14px",background:"#fff",borderRadius:8,border:"1px solid #E2E8F0",marginBottom:4,opacity:task.done?0.45:1}},
+  function TaskRow({task,showProjectName=false,dragHandleProps={}}){
+    const proj = projectMap[task.projectId];
+    return e("div",{style:{display:"flex",alignItems:"flex-start",gap:8,padding:"11px 14px",background:"#fff",borderRadius:8,border:"1px solid #E2E8F0",marginBottom:4,opacity:task.done?0.45:1}},
+      e("div",{style:{cursor:"grab",color:"#CBD5E1",fontSize:16,padding:"2px 2px 2px 0",marginTop:1,flexShrink:0,touchAction:"none"},...dragHandleProps},"⠿"),
       e("button",{style:{background:"none",border:"none",cursor:"pointer",padding:0,marginTop:2,flexShrink:0},onClick:()=>toggleDone(task.id)},
         e("div",{style:{width:18,height:18,borderRadius:4,border:`2px solid ${task.done?"#2563EB":"#CBD5E1"}`,background:task.done?"#2563EB":"transparent",display:"flex",alignItems:"center",justifyContent:"center"}},
           task.done&&e("svg",{width:10,height:8,viewBox:"0 0 10 8"},e("path",{d:"M1 4l3 3 5-6",stroke:"#fff",strokeWidth:1.8,fill:"none",strokeLinecap:"round",strokeLinejoin:"round"}))
         )
       ),
       e("div",{style:{flex:1,minWidth:0,cursor:"pointer"},onClick:()=>setModalTask({...task})},
-        e("div",{style:{fontSize:15,color:"#1E293B",lineHeight:1.4,textDecoration:task.done?"line-through":"none"}},task.text),
+        e("div",{style:{fontSize:15,color:"#1E293B",lineHeight:1.4,textDecoration:task.done?"line-through":"none"}},
+          task.text,
+          showProjectName&&proj&&e("span",{style:{color:"#94A3B8",fontWeight:400}}," ("+proj.name+")")
+        ),
         task.notes&&e("div",{style:{fontSize:12,color:"#64748B",marginTop:3}},task.notes)
       ),
       e("button",{style:{background:"none",border:"none",cursor:"pointer",fontSize:20,padding:"0 2px",flexShrink:0,color:task.priority?"#F59E0B":"#CBD5E1",lineHeight:1},onClick:()=>togglePriority(task.id)},"★")
     );
+  }
+
+  // ── Generic drag-and-drop list wrapper ──────────────────────────────────
+  function DragList({items,getId,onReorder,renderItem}){
+    const [dragId,setDragId] = React.useState(null);
+    const [overId,setOverId] = React.useState(null);
+    function handleDrop(targetId){
+      if(dragId===null||dragId===targetId){setDragId(null);setOverId(null);return;}
+      const ids = items.map(getId);
+      const fromIdx = ids.indexOf(dragId);
+      const toIdx = ids.indexOf(targetId);
+      const newIds = [...ids];
+      newIds.splice(fromIdx,1);
+      newIds.splice(toIdx,0,dragId);
+      onReorder(newIds);
+      setDragId(null); setOverId(null);
+    }
+    return e("div",null, items.map(item=>{
+      const id = getId(item);
+      const dragHandleProps = {
+        draggable:true,
+        onDragStart:()=>setDragId(id),
+        onDragOver:(ev)=>{ev.preventDefault();setOverId(id);},
+        onDrop:()=>handleDrop(id),
+        onDragEnd:()=>{setDragId(null);setOverId(null);}
+      };
+      return e("div",{key:id,style:{outline:overId===id&&dragId!==id?"2px dashed #2563EB":"none",borderRadius:8}},
+        renderItem(item,dragHandleProps)
+      );
+    }));
   }
 
   // ── Add task bar ─────────────────────────────────────────────────────────
@@ -208,10 +272,10 @@ function App(){
     const [selProj,setSelProj]=React.useState(projectId||data.projects[0]?.id||"");
     function submit(){ if(!text.trim())return; addTask(asPriority?selProj:projectId,text,asPriority); setText(""); }
     return e("div",{style:{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}},
-      e("input",{style:{flex:1,minWidth:160,padding:"10px 12px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:15,background:"#fff",outline:"none"},placeholder:"Add task…",value:text,onChange:ev=>setText(ev.target.value),onKeyDown:ev=>ev.key==="Enter"&&submit()}),
       asPriority&&e("select",{style:{padding:"10px 10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:14,background:"#fff",color:"#334155",maxWidth:200},value:selProj,onChange:ev=>setSelProj(ev.target.value)},
         data.projects.map(p=>e("option",{key:p.id,value:p.id},p.name))
       ),
+      e("input",{style:{flex:1,minWidth:160,padding:"10px 12px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:15,background:"#fff",outline:"none"},placeholder:"Add task…",value:text,onChange:ev=>setText(ev.target.value),onKeyDown:ev=>ev.key==="Enter"&&submit()}),
       e("button",{style:{padding:"10px 16px",borderRadius:8,background:"#2563EB",color:"#fff",border:"none",fontSize:14,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"},onClick:submit},"+ Add")
     );
   }
@@ -230,17 +294,20 @@ function App(){
     e("span",{style:{fontSize:11,color:syncColor}},syncLabel)
   );
 
-  // ── This Week view ───────────────────────────────────────────────────────
+  // ── Front Burner view ────────────────────────────────────────────────────
   let mainContent;
   if(view==="week"){
-    const projectsWithPriority = data.projects.map(p=>({
-      proj:p,
-      tasks:data.tasks.filter(t=>t.projectId===p.id&&t.priority&&!t.done)
-    })).filter(g=>g.tasks.length>0);
+    const priorityTasks = data.tasks.filter(t=>t.priority&&!t.done).sort((a,b)=>(a.priorityOrder||0)-(b.priorityOrder||0));
+    const projectsInUse = new Set(priorityTasks.map(t=>t.projectId)).size;
 
     mainContent = e("div",{style:{padding:"16px"}},
       e("h2",{style:{fontSize:20,fontWeight:700,color:"#0F172A",marginBottom:4}},"Front Burner"),
-      e("p",{style:{fontSize:13,color:"#64748B",marginBottom:20}},priorityCount+" priority task"+(priorityCount!==1?"s":"")+" across "+projectsWithPriority.length+" project"+(projectsWithPriority.length!==1?"s":"")),
+      e("p",{style:{fontSize:13,color:"#64748B",marginBottom:16}},priorityCount+" priority task"+(priorityCount!==1?"s":"")+" across "+projectsInUse+" project"+(projectsInUse!==1?"s":"")),
+
+      e("div",{style:{marginBottom:24,paddingBottom:16,borderBottom:"1px solid #E2E8F0"}},
+        e("p",{style:{fontSize:12,color:"#94A3B8",marginBottom:6}},"Add a Front Burner task to a project:"),
+        e(AddTaskBar,{asPriority:true})
+      ),
 
       priorityCount===0&&e("div",{style:{textAlign:"center",padding:"40px 20px",color:"#94A3B8"}},
         e("div",{style:{fontSize:40,marginBottom:12}},"★"),
@@ -248,25 +315,17 @@ function App(){
         e("p",{style:{fontSize:13,marginTop:6}},"Star any task to add it here.")
       ),
 
-      projectsWithPriority.map(({proj,tasks})=>
-        e("div",{key:proj.id,style:{marginBottom:24}},
-          e("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:8}},
-            e("div",{style:{width:10,height:10,borderRadius:"50%",background:proj.color}}),
-            e("span",{style:{fontSize:13,fontWeight:700,color:"#475569",textTransform:"uppercase",letterSpacing:.5}}),
-            e("span",{style:{fontSize:15,fontWeight:700,color:"#1E293B"}},proj.name)
-          ),
-          tasks.map(t=>e(TaskRow,{key:t.id,task:t}))
-        )
-      ),
-
-      e("div",{style:{marginTop:24,paddingTop:16,borderTop:"1px solid #E2E8F0"}},
-        e("p",{style:{fontSize:12,color:"#94A3B8",marginBottom:6}},"Add a priority task to a project:"),
-        e(AddTaskBar,{asPriority:true})
-      )
+      e(DragList,{
+        items:priorityTasks,
+        getId:t=>t.id,
+        onReorder:reorderFrontBurner,
+        renderItem:(t,dragHandleProps)=>e(TaskRow,{key:t.id,task:t,showProjectName:true,dragHandleProps})
+      })
     );
 
   // ── Projects list view ───────────────────────────────────────────────────
   } else if(view==="projects"){
+    const sortedProjects = [...data.projects].sort((a,b)=>(a.order||0)-(b.order||0));
     mainContent = e("div",{style:{padding:"16px"}},
       e("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:8}},
         e("h2",{style:{fontSize:20,fontWeight:700,color:"#0F172A"}},"Projects"),
@@ -279,21 +338,28 @@ function App(){
         e("p",{style:{fontSize:15}},"No projects yet."),
         e("p",{style:{fontSize:13,marginTop:6}},"Tap + New Project to get started.")
       ),
-      data.projects.map(p=>{
-        const pt=data.tasks.filter(t=>t.projectId===p.id);
-        const pri=pt.filter(t=>t.priority&&!t.done).length;
-        const done=pt.filter(t=>t.done).length;
-        return e("div",{key:p.id,
-          style:{background:"#fff",border:"1px solid #E2E8F0",borderLeft:`4px solid ${p.color}`,borderRadius:8,padding:"14px 16px",marginBottom:10,cursor:"pointer"},
-          onClick:()=>setView(p.id)
-        },
-          e("div",{style:{fontSize:15,fontWeight:600,color:"#1E293B",marginBottom:6}},p.name),
-          e("div",{style:{display:"flex",gap:12,fontSize:13,color:"#64748B"}},
-            e("span",null,pt.length+" tasks"),
-            e("span",null,done+" done"),
-            pri>0&&e("span",{style:{color:"#F59E0B",fontWeight:600}},"★ "+pri+" this week")
-          )
-        );
+      e(DragList,{
+        items:sortedProjects,
+        getId:p=>p.id,
+        onReorder:reorderProjects,
+        renderItem:(p,dragHandleProps)=>{
+          const pt=data.tasks.filter(t=>t.projectId===p.id);
+          const pri=pt.filter(t=>t.priority&&!t.done).length;
+          const done=pt.filter(t=>t.done).length;
+          return e("div",{key:p.id,
+            style:{display:"flex",alignItems:"center",gap:8,background:"#fff",border:"1px solid #E2E8F0",borderLeft:`4px solid ${p.color}`,borderRadius:8,padding:"14px 16px",marginBottom:10}
+          },
+            e("div",{style:{cursor:"grab",color:"#CBD5E1",fontSize:16,flexShrink:0,touchAction:"none"},...dragHandleProps},"⠿"),
+            e("div",{style:{flex:1,minWidth:0,cursor:"pointer"},onClick:()=>setView(p.id)},
+              e("div",{style:{fontSize:15,fontWeight:600,color:"#1E293B",marginBottom:6}},p.name),
+              e("div",{style:{display:"flex",gap:12,fontSize:13,color:"#64748B"}},
+                e("span",null,pt.length+" tasks"),
+                e("span",null,done+" done"),
+                pri>0&&e("span",{style:{color:"#F59E0B",fontWeight:600}},"★ "+pri+" Front Burner tasks")
+              )
+            )
+          );
+        }
       })
     );
 
@@ -303,7 +369,7 @@ function App(){
     if(!proj){ mainContent=e("div",{style:{padding:16}},"Project not found."); }
     else{
       const tasks=data.tasks.filter(t=>t.projectId===view);
-      const open=tasks.filter(t=>!t.done);
+      const open=tasks.filter(t=>!t.done).sort((a,b)=>(a.order||0)-(b.order||0));
       const closed=tasks.filter(t=>t.done);
       mainContent=e("div",{style:{padding:"16px"}},
         e("div",{style:{display:"flex",alignItems:"center",gap:12,marginBottom:6}},
@@ -322,9 +388,16 @@ function App(){
             onClick:()=>{ if(confirm("Delete project and all its tasks?"))deleteProject(proj.id); }
           },"Delete")
         ),
-        open.map(t=>e(TaskRow,{key:t.id,task:t})),
-        open.length===0&&e("p",{style:{color:"#94A3B8",textAlign:"center",padding:"20px 0",fontSize:14}},"No open tasks. Add one below."),
         e(AddTaskBar,{projectId:view}),
+        e("div",{style:{marginTop:12}},
+          e(DragList,{
+            items:open,
+            getId:t=>t.id,
+            onReorder:(newIds)=>reorderProjectTasks(view,newIds),
+            renderItem:(t,dragHandleProps)=>e(TaskRow,{key:t.id,task:t,dragHandleProps})
+          })
+        ),
+        open.length===0&&e("p",{style:{color:"#94A3B8",textAlign:"center",padding:"20px 0",fontSize:14}},"No open tasks. Add one above."),
         closed.length>0&&e("details",{style:{marginTop:20}},
           e("summary",{style:{fontSize:13,color:"#94A3B8",cursor:"pointer",padding:"8px 0"}},"Completed ("+closed.length+")"),
           e("div",{style:{marginTop:8}},closed.map(t=>e(TaskRow,{key:t.id,task:t})))
