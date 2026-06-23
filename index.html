@@ -60,15 +60,36 @@ function App(){
 
   // ── Google init ──────────────────────────────────────────────────────────
   React.useEffect(()=>{
-    function initGapi(){ window.gapi.load("client",async()=>{ await window.gapi.client.init({}); }); }
+    function initGapi(){ window.gapi.load("client",async()=>{ await window.gapi.client.init({}); trySavedToken(); }); }
+    function trySavedToken(){
+      const saved = localStorage.getItem("rrr_token");
+      const savedExp = parseInt(localStorage.getItem("rrr_token_exp")||"0",10);
+      if(saved && Date.now() < savedExp){
+        window.gapi.client.setToken({access_token:saved});
+        setSignedIn(true);
+        loadFromDrive();
+        return true;
+      }
+      return false;
+    }
     function initGoogle(){
       tokenClient.current = window.google.accounts.oauth2.initTokenClient({
         client_id:CLIENT_ID, scope:SCOPES,
-        callback:(resp)=>{ if(resp.error){console.error(resp);return;} localStorage.setItem("rrr_was_signed_in","true"); setSignedIn(true); loadFromDrive(); }
+        hint: localStorage.getItem("rrr_email")||undefined,
+        callback:(resp)=>{
+          if(resp.error){console.error(resp);return;}
+          localStorage.setItem("rrr_was_signed_in","true");
+          localStorage.setItem("rrr_token",resp.access_token);
+          localStorage.setItem("rrr_token_exp", String(Date.now() + (resp.expires_in||3600)*1000 - 60000));
+          // Try to capture email for future hint
+          fetch("https://www.googleapis.com/oauth2/v3/userinfo",{headers:{Authorization:"Bearer "+resp.access_token}})
+            .then(r=>r.json()).then(info=>{ if(info.email) localStorage.setItem("rrr_email",info.email); }).catch(()=>{});
+          setSignedIn(true); loadFromDrive();
+        }
       });
       setGapiReady(true);
-      // Try silent auto sign-in (no popup) if user signed in before on this device
-      if(localStorage.getItem("rrr_was_signed_in")==="true"){
+      // If no valid cached token, try silent re-auth using saved email hint (no account chooser)
+      if(!trySavedToken() && localStorage.getItem("rrr_was_signed_in")==="true"){
         tokenClient.current.requestAccessToken({prompt:""});
       }
     }
