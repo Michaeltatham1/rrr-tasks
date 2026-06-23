@@ -140,10 +140,52 @@ function App(){
     updateData(d=>({...d,projects:d.projects.map(p=>({...p,order:newOrderIds.indexOf(p.id)}))}));
   }
   function reorderProjectTasks(projectId,newOrderIds){
-    updateData(d=>({...d,tasks:d.tasks.map(t=>t.projectId===projectId?{...t,order:newOrderIds.indexOf(t.id)}:t)}));
+    updateData(d=>{
+      let tasks = d.tasks.map(t=>t.projectId===projectId?{...t,order:newOrderIds.indexOf(t.id)}:t);
+      // Sync priorityOrder for this project's priority tasks to match their new relative order
+      const priorityTasksHere = newOrderIds
+        .map(id=>tasks.find(t=>t.id===id))
+        .filter(t=>t && t.priority && !t.done);
+      if(priorityTasksHere.length>1){
+        const otherPriorityTasks = tasks.filter(t=>t.priority&&!t.done&&t.projectId!==projectId).sort((a,b)=>(a.priorityOrder||0)-(b.priorityOrder||0));
+        const minExistingOrder = Math.min(...priorityTasksHere.map(t=>t.priorityOrder||0));
+        // Re-number: keep other projects' priority tasks' relative order, splice this project's tasks back at the same approximate position
+        const allPriority = tasks.filter(t=>t.priority&&!t.done).sort((a,b)=>(a.priorityOrder||0)-(b.priorityOrder||0));
+        const withoutThisProject = allPriority.filter(t=>t.projectId!==projectId);
+        const insertAt = allPriority.findIndex(t=>t.projectId===projectId);
+        const merged = [...withoutThisProject];
+        merged.splice(insertAt<0?merged.length:insertAt,0,...priorityTasksHere);
+        merged.forEach((t,idx)=>{ tasks = tasks.map(x=>x.id===t.id?{...x,priorityOrder:idx}:x); });
+      }
+      return {...d,tasks};
+    });
   }
   function reorderFrontBurner(newOrderIds){
-    updateData(d=>({...d,tasks:d.tasks.map(t=>newOrderIds.includes(t.id)?{...t,priorityOrder:newOrderIds.indexOf(t.id)}:t)}));
+    updateData(d=>{
+      // Update priorityOrder for the dragged set
+      let tasks = d.tasks.map(t=>newOrderIds.includes(t.id)?{...t,priorityOrder:newOrderIds.indexOf(t.id)}:t);
+      // For each project touched, also reorder its full task list to match relative order of the moved priority tasks
+      const touchedProjectIds = new Set(newOrderIds.map(id=>tasks.find(t=>t.id===id)?.projectId).filter(Boolean));
+      touchedProjectIds.forEach(pid=>{
+        const projTasks = tasks.filter(t=>t.projectId===pid).sort((a,b)=>(a.order||0)-(b.order||0));
+        const priorityIdsInThisProject = newOrderIds.filter(id=>{
+          const t = tasks.find(x=>x.id===id);
+          return t && t.projectId===pid;
+        });
+        // Build new order: priority tasks (in their new relative order) keep their relative slots,
+        // non-priority tasks keep their existing relative order, merged by original position of first priority task
+        const nonPriorityTasks = projTasks.filter(t=>!priorityIdsInThisProject.includes(t.id));
+        // Find earliest original index among the priority tasks to splice back in at roughly the same place
+        const originalIndices = priorityIdsInThisProject.map(id=>projTasks.findIndex(t=>t.id===id));
+        const insertAt = Math.min(...originalIndices);
+        const merged = [...nonPriorityTasks];
+        merged.splice(insertAt,0,...priorityIdsInThisProject.map(id=>projTasks.find(t=>t.id===id)));
+        merged.forEach((t,idx)=>{
+          tasks = tasks.map(x=>x.id===t.id?{...x,order:idx}:x);
+        });
+      });
+      return {...d,tasks};
+    });
   }
   function saveTask(updated){ updateData(d=>({...d,tasks:d.tasks.map(t=>t.id===updated.id?updated:t)})); setModalTask(null); }
   function deleteTask(id){ updateData(d=>({...d,tasks:d.tasks.filter(t=>t.id!==id)})); setModalTask(null); }
