@@ -102,7 +102,11 @@ function App(){
 
   // ── Drive ────────────────────────────────────────────────────────────────
   async function findFile(){
-    const res = await window.gapi.client.request({path:"https://www.googleapis.com/drive/v3/files",params:{q:`name='${FILE_NAME}' and trashed=false`,fields:"files(id)"}});
+    // FIX: scope search to files owned by the signed-in account only.
+    // Without "'me' in owners", Drive's search also returns files that have
+    // merely been SHARED with this account (even from years ago), which can
+    // cause one user's session to load a different user's file.
+    const res = await window.gapi.client.request({path:"https://www.googleapis.com/drive/v3/files",params:{q:`name='${FILE_NAME}' and trashed=false and 'me' in owners`,fields:"files(id)"}});
     return res.result.files?.[0]?.id||null;
   }
   async function loadFromDrive(){
