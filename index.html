@@ -30,15 +30,15 @@ function uid(){ return Math.random().toString(36).slice(2,10); }
 function today(){ return new Date().toISOString().slice(0,10); }
 const DEMO = {
   projects:[
-    {id:"p1",name:"SRFR Station 71 Trailer Remodel",color:"#2563EB",createdAt:today(),order:0},
-    {id:"p2",name:"Trailer Roof Refinishing",color:"#16A34A",createdAt:today(),order:1}
+    {id:"p1",name:"Example Project 1",color:"#2563EB",createdAt:today(),order:0},
+    {id:"p2",name:"Example Project 2",color:"#16A34A",createdAt:today(),order:1}
   ],
   tasks:[
-    {id:"t1",projectId:"p1",text:"Finalize cover page dates with client",priority:true,done:false,notes:"",createdAt:today(),order:0,priorityOrder:0},
-    {id:"t2",projectId:"p1",text:"Submit permit application",priority:false,done:false,notes:"",createdAt:today(),order:1,priorityOrder:0},
-    {id:"t3",projectId:"p1",text:"Order interior materials",priority:false,done:false,notes:"",createdAt:today(),order:2,priorityOrder:0},
-    {id:"t4",projectId:"p2",text:"Apply first coat RX-985 silicone coating",priority:true,done:false,notes:"Use 3/4 nap roller",createdAt:today(),order:0,priorityOrder:1},
-    {id:"t5",projectId:"p2",text:"Wire cup scrub remaining rust spots",priority:false,done:false,notes:"",createdAt:today(),order:1,priorityOrder:0}
+    {id:"t1",projectId:"p1",text:"Example Task 1 (this is a Front Burner / priority task)",priority:true,done:false,notes:"",createdAt:today(),order:0,priorityOrder:0},
+    {id:"t2",projectId:"p1",text:"Example Task 2",priority:false,done:false,notes:"",createdAt:today(),order:1,priorityOrder:0},
+    {id:"t3",projectId:"p1",text:"Example Task 3",priority:false,done:false,notes:"",createdAt:today(),order:2,priorityOrder:0},
+    {id:"t4",projectId:"p2",text:"Example Task 4 (this is a Front Burner / priority task)",priority:true,done:false,notes:"You can add notes to any task, like this",createdAt:today(),order:0,priorityOrder:1},
+    {id:"t5",projectId:"p2",text:"Example Task 5",priority:false,done:false,notes:"",createdAt:today(),order:1,priorityOrder:0}
   ]
 };
 
@@ -144,9 +144,9 @@ function App(){
   function addTask(projectId,text,asPriority=false){
     if(!text.trim()||!projectId)return;
     updateData(d=>{
-      const maxOrder = Math.max(-1,...d.tasks.filter(t=>t.projectId===projectId).map(t=>t.order||0));
-      const maxPriOrder = Math.max(-1,...d.tasks.filter(t=>t.priority&&!t.done).map(t=>t.priorityOrder||0));
-      return {...d,tasks:[...d.tasks,{id:uid(),projectId,text:text.trim(),priority:asPriority,done:false,notes:"",createdAt:today(),order:maxOrder+1,priorityOrder:asPriority?maxPriOrder+1:0}]};
+      const minOrder = Math.min(0,...d.tasks.filter(t=>t.projectId===projectId).map(t=>t.order||0));
+      const minPriOrder = Math.min(0,...d.tasks.filter(t=>t.priority&&!t.done).map(t=>t.priorityOrder||0));
+      return {...d,tasks:[{id:uid(),projectId,text:text.trim(),priority:asPriority,done:false,notes:"",createdAt:today(),order:minOrder-1,priorityOrder:asPriority?minPriOrder-1:0},...d.tasks]};
     });
   }
   function toggleDone(id){ updateData(d=>({...d,tasks:d.tasks.map(t=>t.id===id?{...t,done:!t.done}:t)})); }
@@ -155,8 +155,8 @@ function App(){
       const t = d.tasks.find(x=>x.id===id);
       if(!t)return d;
       if(!t.priority){
-        const maxPriOrder = Math.max(-1,...d.tasks.filter(x=>x.priority&&!x.done).map(x=>x.priorityOrder||0));
-        return {...d,tasks:d.tasks.map(x=>x.id===id?{...x,priority:true,priorityOrder:maxPriOrder+1}:x)};
+        const minPriOrder = Math.min(0,...d.tasks.filter(x=>x.priority&&!x.done).map(x=>x.priorityOrder||0));
+        return {...d,tasks:d.tasks.map(x=>x.id===id?{...x,priority:true,priorityOrder:minPriOrder-1}:x)};
       }
       return {...d,tasks:d.tasks.map(x=>x.id===id?{...x,priority:false}:x)};
     });
