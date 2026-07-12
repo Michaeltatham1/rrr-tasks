@@ -188,10 +188,10 @@ function App(){
   function addTask(projectId,text,asPriority=false){
     if(!text.trim()||!projectId)return;
     updateData(d=>{
-      // Use negative timestamp so newer tasks have lower (earlier) sort values
       const orderVal = -Date.now();
-      const maxPriOrder = Math.max(-1,...d.tasks.filter(t=>t.priority&&!t.done).map(t=>t.priorityOrder??-1));
-      const newTask = {id:uid(),projectId,text:text.trim(),priority:asPriority,done:false,notes:"",createdAt:today(),order:orderVal,priorityOrder:asPriority?maxPriOrder+1:0,completedAt:null};
+      const priorityTasks = d.tasks.filter(t=>t.priority&&!t.done);
+      const minPriOrder = priorityTasks.length>0 ? Math.min(...priorityTasks.map(t=>t.priorityOrder??0)) - 1 : 0;
+      const newTask = {id:uid(),projectId,text:text.trim(),priority:asPriority,done:false,notes:"",createdAt:today(),order:orderVal,priorityOrder:asPriority?minPriOrder:0,completedAt:null};
       return {...d,tasks:[newTask,...d.tasks]};
     });
   }
