@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -63,6 +63,20 @@ function App(){
   const fileIdRef = React.useRef(null);
   const saveTimer = React.useRef(null);
   const tokenClient = React.useRef(null);
+  const refreshTimer = React.useRef(null);
+
+  function scheduleTokenRefresh(){
+    clearTimeout(refreshTimer.current);
+    const exp = parseInt(localStorage.getItem("rrr_token_exp")||"0",10);
+    const msUntilRefresh = exp - Date.now() - 10*60*1000; // 10 min before expiry
+    if(msUntilRefresh <= 0) return;
+    refreshTimer.current = setTimeout(()=>{
+      // Silent refresh — no prompt, no popup
+      if(tokenClient.current){
+        tokenClient.current.requestAccessToken({prompt:""});
+      }
+    }, msUntilRefresh);
+  }
 
   // ── Google init ──────────────────────────────────────────────────────────
   React.useEffect(()=>{
@@ -74,7 +88,7 @@ function App(){
         window.gapi.client.setToken({access_token:saved});
         const cachedEmail = localStorage.getItem("rrr_email");
         if(cachedEmail) setUserHandle(cachedEmail.split("@")[0]);
-        setSignedIn(true); loadFromDrive(); return true;
+        setSignedIn(true); loadFromDrive(); scheduleTokenRefresh(); return true;
       }
       return false;
     }
@@ -107,6 +121,7 @@ function App(){
                 }
               }).catch(()=>{});
           }
+          scheduleTokenRefresh();
           setSignedIn(true); loadFromDrive();
         }
       });
@@ -173,9 +188,9 @@ function App(){
   function addTask(projectId,text,asPriority=false){
     if(!text.trim()||!projectId)return;
     updateData(d=>{
-      const maxOrder = Math.max(-1,...d.tasks.filter(t=>t.projectId===projectId).map(t=>t.order||0));
+      const minOrder = Math.min(0,...d.tasks.filter(t=>t.projectId===projectId).map(t=>t.order||0));
       const maxPriOrder = Math.max(-1,...d.tasks.filter(t=>t.priority&&!t.done).map(t=>t.priorityOrder||0));
-      return {...d,tasks:[...d.tasks,{id:uid(),projectId,text:text.trim(),priority:asPriority,done:false,notes:"",createdAt:today(),order:maxOrder+1,priorityOrder:asPriority?maxPriOrder+1:0,completedAt:null}]};
+      return {...d,tasks:[...d.tasks,{id:uid(),projectId,text:text.trim(),priority:asPriority,done:false,notes:"",createdAt:today(),order:minOrder-1,priorityOrder:asPriority?maxPriOrder+1:0,completedAt:null}]};
     });
   }
   function toggleDone(id){
