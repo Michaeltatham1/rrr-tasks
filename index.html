@@ -1,4 +1,4 @@
-!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -188,9 +188,11 @@ function App(){
   function addTask(projectId,text,asPriority=false){
     if(!text.trim()||!projectId)return;
     updateData(d=>{
-      const minOrder = Math.min(0,...d.tasks.filter(t=>t.projectId===projectId).map(t=>t.order||0));
-      const maxPriOrder = Math.max(-1,...d.tasks.filter(t=>t.priority&&!t.done).map(t=>t.priorityOrder||0));
-      return {...d,tasks:[...d.tasks,{id:uid(),projectId,text:text.trim(),priority:asPriority,done:false,notes:"",createdAt:today(),order:minOrder-1,priorityOrder:asPriority?maxPriOrder+1:0,completedAt:null}]};
+      const existingTasks = d.tasks.filter(t=>t.projectId===projectId&&!t.done);
+      const minOrder = existingTasks.length>0 ? Math.min(...existingTasks.map(t=>t.order??0)) - 1 : 0;
+      const maxPriOrder = Math.max(-1,...d.tasks.filter(t=>t.priority&&!t.done).map(t=>t.priorityOrder??-1));
+      const newTask = {id:uid(),projectId,text:text.trim(),priority:asPriority,done:false,notes:"",createdAt:today(),order:minOrder,priorityOrder:asPriority?maxPriOrder+1:0,completedAt:null};
+      return {...d,tasks:[newTask,...d.tasks]};
     });
   }
   function toggleDone(id){
@@ -540,7 +542,11 @@ function App(){
     if(!proj){ mainContent=e("div",{style:{padding:16}},"Project not found."); }
     else{
       const tasks=data.tasks.filter(t=>t.projectId===view);
-      const open=tasks.filter(t=>!t.done).sort((a,b)=>(a.order??999)-(b.order??999));
+      const open=tasks.filter(t=>!t.done).sort((a,b)=>{
+        const ao = a.order??999, bo = b.order??999;
+        if(ao!==bo) return ao-bo;
+        return tasks.indexOf(a)-tasks.indexOf(b);
+      });
       const closed=tasks.filter(t=>t.done).sort((a,b)=>(b.completedAt||0)-(a.completedAt||0));
       mainContent=e("div",{style:{padding:"16px"}},
         e("button",{style:{background:"none",border:"none",cursor:"pointer",color:"#64748B",fontSize:14,padding:"0 0 12px 0"},onClick:()=>setView("projects")},"← Projects"),
