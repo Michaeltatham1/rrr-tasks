@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -530,36 +529,37 @@ function App(){
   }
 
   // ── Edit task modal ──────────────────────────────────────────────────────
-  const modal = modalTask&&e("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"flex-start",justifyContent:"center",zIndex:100,padding:"16px",overflowY:"auto"},onClick:ev=>ev.target===ev.currentTarget&&setModalTask(null)},
-    e("div",{style:{background:"#fff",borderRadius:12,padding:20,width:"100%",maxWidth:520,boxShadow:"0 20px 60px rgba(0,0,0,.2)",marginTop:20}},
-      e("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}},
+  const modal = modalTask&&e("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"flex-start",justifyContent:"center",zIndex:100,padding:"12px",overflowY:"auto"},onClick:ev=>ev.target===ev.currentTarget&&setModalTask(null)},
+    e("div",{style:{background:"#fff",borderRadius:12,padding:16,width:"100%",maxWidth:560,boxShadow:"0 20px 60px rgba(0,0,0,.2)",marginTop:16}},
+      e("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}},
         e("h3",{style:{fontSize:16,fontWeight:700,margin:0}},"Edit Task"),
-        e("button",{style:{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#94A3B8",padding:0},onClick:()=>setModalTask(null)},"×")
+        e("button",{style:{background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#94A3B8",padding:0,lineHeight:1},onClick:()=>setModalTask(null)},"×")
       ),
-      e("label",{style:{display:"block",fontSize:12,fontWeight:600,color:"#64748B",marginBottom:4}},"Task"),
-      e("input",{style:{width:"100%",padding:"10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:15,boxSizing:"border-box"},value:modalTask.text,
-        onChange:ev=>{const updated={...modalTask,text:ev.target.value};setModalTask(updated);saveTask(updated);}}),
-      e("div",{style:{display:"flex",gap:12,marginTop:12}},
-        e("div",{style:{flex:1}},
-          e("label",{style:{display:"block",fontSize:12,fontWeight:600,color:"#64748B",marginBottom:4}},"Project"),
-          e("select",{style:{width:"100%",padding:"10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:14,boxSizing:"border-box"},value:modalTask.projectId,
-            onChange:ev=>{const updated={...modalTask,projectId:ev.target.value};setModalTask(updated);saveTask(updated);}},
-            data.projects.map(p=>e("option",{key:p.id,value:p.id},p.name))
-          )
+      // Task label + input on one line
+      e("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:8}},
+        e("label",{style:{fontSize:13,fontWeight:600,color:"#64748B",whiteSpace:"nowrap",width:52,flexShrink:0}},"Task"),
+        e("input",{style:{flex:1,padding:"8px 10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:14,boxSizing:"border-box"},value:modalTask.text,
+          onChange:ev=>{const updated={...modalTask,text:ev.target.value};setModalTask(updated);saveTask(updated);}})
+      ),
+      // Project + Front Burner checkbox on one line
+      e("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:12}},
+        e("label",{style:{fontSize:13,fontWeight:600,color:"#64748B",whiteSpace:"nowrap",width:52,flexShrink:0}},"Project"),
+        e("select",{style:{flex:1,padding:"8px 10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:14,boxSizing:"border-box"},value:modalTask.projectId,
+          onChange:ev=>{const updated={...modalTask,projectId:ev.target.value};setModalTask(updated);saveTask(updated);}},
+          data.projects.map(p=>e("option",{key:p.id,value:p.id},p.name))
         ),
-        e("div",{style:{display:"flex",alignItems:"flex-end",paddingBottom:2}},
-          e("label",{style:{display:"flex",alignItems:"center",gap:6,fontSize:13,color:"#64748B",cursor:"pointer",whiteSpace:"nowrap"}},
-            e("input",{type:"checkbox",checked:modalTask.priority,
-              onChange:ev=>{const updated={...modalTask,priority:ev.target.checked};setModalTask(updated);saveTask(updated);}}),
-            "★ Front Burner"
-          )
+        e("label",{style:{display:"flex",alignItems:"center",gap:5,fontSize:13,color:"#64748B",cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}},
+          e("input",{type:"checkbox",checked:modalTask.priority,
+            onChange:ev=>{const updated={...modalTask,priority:ev.target.checked};setModalTask(updated);saveTask(updated);}}),
+          "★ FB"
         )
       ),
-      e("label",{style:{display:"block",fontSize:12,fontWeight:600,color:"#64748B",margin:"12px 0 4px"}},"Notes"),
-      e("textarea",{style:{width:"100%",padding:"10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:14,boxSizing:"border-box",height:120,resize:"vertical",fontFamily:"inherit"},value:modalTask.notes,
+      // Notes label above, large textarea
+      e("label",{style:{display:"block",fontSize:13,fontWeight:600,color:"#64748B",marginBottom:4}},"Notes"),
+      e("textarea",{style:{width:"100%",padding:"10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:14,boxSizing:"border-box",height:"min(50vh, 320px)",resize:"vertical",fontFamily:"inherit",lineHeight:1.5},value:modalTask.notes,
         placeholder:"Add any notes, details, or context…",
         onChange:ev=>{const updated={...modalTask,notes:ev.target.value};setModalTask(updated);saveTask(updated);}}),
-      e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:16}},
+      e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:12}},
         e("button",{style:{padding:"8px 14px",background:"#FEF2F2",color:"#DC2626",border:"none",borderRadius:8,fontSize:13,cursor:"pointer"},onClick:()=>{if(confirm("Delete this task?"))deleteTask(modalTask.id);}},"Delete"),
         e("button",{style:{padding:"8px 18px",background:"#F1F5F9",color:"#475569",border:"none",borderRadius:8,fontSize:13,cursor:"pointer"},onClick:()=>setModalTask(null)},"Close")
       )
@@ -603,4 +603,3 @@ root.render(e(App));
 </script>
 </body>
 </html>
-
