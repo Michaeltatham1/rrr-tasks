@@ -189,9 +189,7 @@ function App(){
     if(!text.trim()||!projectId)return;
     updateData(d=>{
       const orderVal = -Date.now();
-      const priorityTasks = d.tasks.filter(t=>t.priority&&!t.done);
-      const minPriOrder = priorityTasks.length>0 ? Math.min(...priorityTasks.map(t=>t.priorityOrder??0)) - 1 : 0;
-      const newTask = {id:uid(),projectId,text:text.trim(),priority:asPriority,done:false,notes:"",createdAt:today(),order:orderVal,priorityOrder:asPriority?minPriOrder:0,completedAt:null};
+      const newTask = {id:uid(),projectId,text:text.trim(),priority:asPriority,done:false,notes:"",createdAt:today(),order:orderVal,priorityOrder:asPriority?orderVal:0,completedAt:null};
       return {...d,tasks:[newTask,...d.tasks]};
     });
   }
@@ -203,8 +201,7 @@ function App(){
       const t = d.tasks.find(x=>x.id===id);
       if(!t)return d;
       if(!t.priority){
-        const maxPriOrder = Math.max(-1,...d.tasks.filter(x=>x.priority&&!x.done).map(x=>x.priorityOrder||0));
-        return {...d,tasks:d.tasks.map(x=>x.id===id?{...x,priority:true,priorityOrder:maxPriOrder+1}:x)};
+        return {...d,tasks:d.tasks.map(x=>x.id===id?{...x,priority:true,priorityOrder:-Date.now()}:x)};
       }
       return {...d,tasks:d.tasks.map(x=>x.id===id?{...x,priority:false}:x)};
     });
@@ -643,3 +640,4 @@ root.render(e(App));
 </script>
 </body>
 </html>
+
