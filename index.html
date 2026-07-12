@@ -269,6 +269,7 @@ function App(){
   const projectMap = data?Object.fromEntries(data.projects.map(p=>[p.id,p])):{};
   const syncColor={idle:"#94A3B8",saving:"#F59E0B",saved:"#16A34A",error:"#DC2626"}[syncStatus];
   const syncLabel={idle:"",saving:"Saving…",saved:"Saved ✓",error:"Save failed"}[syncStatus];
+  const displayHandle = userHandle || (localStorage.getItem("rrr_email")||"").split("@")[0];
 
   // ── Sign in screen ───────────────────────────────────────────────────────
   if(!signedIn){
@@ -375,7 +376,7 @@ function App(){
   const priorityCount = data.tasks.filter(t=>t.priority&&!t.done).length;
   const isProjectView = view!=="week"&&view!=="projects";
   const topNav = e("div",{style:{background:"#0F172A",padding:"0 12px",display:"flex",alignItems:"center",gap:4,position:"sticky",top:0,zIndex:10}},
-    userHandle&&e("span",{style:{color:"#2563EB",fontSize:13,fontWeight:700,letterSpacing:.5,marginRight:4,flexShrink:0}},userHandle),
+    displayHandle&&e("span",{style:{color:"#2563EB",fontSize:13,fontWeight:700,letterSpacing:.5,marginRight:4,flexShrink:0}},displayHandle),
     e("button",{style:{padding:"14px 14px",border:"none",background:"transparent",color:view==="week"?"#fff":"#64748B",fontSize:14,fontWeight:view==="week"?700:400,cursor:"pointer",borderBottom:view==="week"?"2px solid #2563EB":"2px solid transparent"},onClick:()=>setView("week")},
       "★ Front Burner"+(priorityCount>0?" ("+priorityCount+")":"")
     ),
