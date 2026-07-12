@@ -59,7 +59,7 @@ function App(){
   const [editingProjectName,setEditingProjectName] = React.useState("");
   const [showArchived,setShowArchived] = React.useState(false);
   const [undoStack,setUndoStack] = React.useState([]);
-  const fileIdRef = React.useRef(null);
+  const [userHandle,setUserHandle] = React.useState("");
   const saveTimer = React.useRef(null);
   const tokenClient = React.useRef(null);
 
@@ -71,6 +71,8 @@ function App(){
       const savedExp = parseInt(localStorage.getItem("rrr_token_exp")||"0",10);
       if(saved && Date.now() < savedExp){
         window.gapi.client.setToken({access_token:saved});
+        const cachedEmail = localStorage.getItem("rrr_email");
+        if(cachedEmail) setUserHandle(cachedEmail.split("@")[0]);
         setSignedIn(true); loadFromDrive(); return true;
       }
       return false;
@@ -85,7 +87,12 @@ function App(){
           localStorage.setItem("rrr_token",resp.access_token);
           localStorage.setItem("rrr_token_exp", String(Date.now() + (resp.expires_in||3600)*1000 - 60000));
           fetch("https://www.googleapis.com/oauth2/v3/userinfo",{headers:{Authorization:"Bearer "+resp.access_token}})
-            .then(r=>r.json()).then(info=>{ if(info.email) localStorage.setItem("rrr_email",info.email); }).catch(()=>{});
+            .then(r=>r.json()).then(info=>{ 
+              if(info.email){ 
+                localStorage.setItem("rrr_email",info.email); 
+                setUserHandle(info.email.split("@")[0]);
+              } 
+            }).catch(()=>{});
           setSignedIn(true); loadFromDrive();
         }
       });
@@ -367,6 +374,7 @@ function App(){
   const priorityCount = data.tasks.filter(t=>t.priority&&!t.done).length;
   const isProjectView = view!=="week"&&view!=="projects";
   const topNav = e("div",{style:{background:"#0F172A",padding:"0 12px",display:"flex",alignItems:"center",gap:4,position:"sticky",top:0,zIndex:10}},
+    userHandle&&e("span",{style:{color:"#2563EB",fontSize:13,fontWeight:700,letterSpacing:.5,marginRight:4,flexShrink:0}},userHandle),
     e("button",{style:{padding:"14px 14px",border:"none",background:"transparent",color:view==="week"?"#fff":"#64748B",fontSize:14,fontWeight:view==="week"?700:400,cursor:"pointer",borderBottom:view==="week"?"2px solid #2563EB":"2px solid transparent"},onClick:()=>setView("week")},
       "★ Front Burner"+(priorityCount>0?" ("+priorityCount+")":"")
     ),
