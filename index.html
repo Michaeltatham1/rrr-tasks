@@ -28,23 +28,25 @@ const SCOPES = "https://www.googleapis.com/auth/drive.file";
 const COLORS = ["#2563EB","#16A34A","#DC2626","#D97706","#7C3AED","#0891B2","#DB2777","#65A30D","#EA580C","#4F46E5"];
 function uid(){ return Math.random().toString(36).slice(2,10); }
 function today(){ return new Date().toISOString().slice(0,10); }
+function nowTs(){ return Date.now(); }
+
 const DEMO = {
   projects:[
-    {id:"p1",name:"Example Project 1",color:"#2563EB",createdAt:today(),order:0},
-    {id:"p2",name:"Example Project 2",color:"#16A34A",createdAt:today(),order:1}
+    {id:"p1",name:"SRFR Station 71 Trailer Remodel",color:"#2563EB",createdAt:today(),order:0,archived:false},
+    {id:"p2",name:"Trailer Roof Refinishing",color:"#16A34A",createdAt:today(),order:1,archived:false}
   ],
   tasks:[
-    {id:"t1",projectId:"p1",text:"Example Task 1 (this is a Front Burner / priority task)",priority:true,done:false,notes:"",createdAt:today(),order:0,priorityOrder:0},
-    {id:"t2",projectId:"p1",text:"Example Task 2",priority:false,done:false,notes:"",createdAt:today(),order:1,priorityOrder:0},
-    {id:"t3",projectId:"p1",text:"Example Task 3",priority:false,done:false,notes:"",createdAt:today(),order:2,priorityOrder:0},
-    {id:"t4",projectId:"p2",text:"Example Task 4 (this is a Front Burner / priority task)",priority:true,done:false,notes:"You can add notes to any task, like this",createdAt:today(),order:0,priorityOrder:1},
-    {id:"t5",projectId:"p2",text:"Example Task 5",priority:false,done:false,notes:"",createdAt:today(),order:1,priorityOrder:0}
+    {id:"t1",projectId:"p1",text:"Finalize cover page dates with client",priority:true,done:false,notes:"",createdAt:today(),order:0,priorityOrder:0,completedAt:null},
+    {id:"t2",projectId:"p1",text:"Submit permit application",priority:false,done:false,notes:"",createdAt:today(),order:1,priorityOrder:0,completedAt:null},
+    {id:"t3",projectId:"p1",text:"Order interior materials",priority:false,done:false,notes:"",createdAt:today(),order:2,priorityOrder:0,completedAt:null},
+    {id:"t4",projectId:"p2",text:"Apply first coat RX-985 silicone coating",priority:true,done:false,notes:"Use 3/4 nap roller",createdAt:today(),order:0,priorityOrder:1,completedAt:null},
+    {id:"t5",projectId:"p2",text:"Wire cup scrub remaining rust spots",priority:false,done:false,notes:"",createdAt:today(),order:1,priorityOrder:0,completedAt:null}
   ]
 };
 
 function App(){
   const [data,setData] = React.useState(null);
-  const [view,setView] = React.useState("week"); // "week" | "projects" | projectId
+  const [view,setView] = React.useState("week");
   const [gapiReady,setGapiReady] = React.useState(false);
   const [signedIn,setSignedIn] = React.useState(false);
   const [syncStatus,setSyncStatus] = React.useState("idle");
@@ -54,6 +56,10 @@ function App(){
   const [showImport,setShowImport] = React.useState(false);
   const [importText,setImportText] = React.useState("");
   const [importProjectName,setImportProjectName] = React.useState("");
+  const [editingProjectId,setEditingProjectId] = React.useState(null);
+  const [editingProjectName,setEditingProjectName] = React.useState("");
+  const [showArchived,setShowArchived] = React.useState(false);
+  const [undoStack,setUndoStack] = React.useState([]);
   const fileIdRef = React.useRef(null);
   const saveTimer = React.useRef(null);
   const tokenClient = React.useRef(null);
@@ -66,9 +72,7 @@ function App(){
       const savedExp = parseInt(localStorage.getItem("rrr_token_exp")||"0",10);
       if(saved && Date.now() < savedExp){
         window.gapi.client.setToken({access_token:saved});
-        setSignedIn(true);
-        loadFromDrive();
-        return true;
+        setSignedIn(true); loadFromDrive(); return true;
       }
       return false;
     }
@@ -81,14 +85,12 @@ function App(){
           localStorage.setItem("rrr_was_signed_in","true");
           localStorage.setItem("rrr_token",resp.access_token);
           localStorage.setItem("rrr_token_exp", String(Date.now() + (resp.expires_in||3600)*1000 - 60000));
-          // Try to capture email for future hint
           fetch("https://www.googleapis.com/oauth2/v3/userinfo",{headers:{Authorization:"Bearer "+resp.access_token}})
             .then(r=>r.json()).then(info=>{ if(info.email) localStorage.setItem("rrr_email",info.email); }).catch(()=>{});
           setSignedIn(true); loadFromDrive();
         }
       });
       setGapiReady(true);
-      // If no valid cached token, try silent re-auth using saved email hint (no account chooser)
       if(!trySavedToken() && localStorage.getItem("rrr_was_signed_in")==="true"){
         tokenClient.current.requestAccessToken({prompt:""});
       }
@@ -102,11 +104,7 @@ function App(){
 
   // ── Drive ────────────────────────────────────────────────────────────────
   async function findFile(){
-    // FIX: scope search to files owned by the signed-in account only.
-    // Without "'me' in owners", Drive's search also returns files that have
-    // merely been SHARED with this account (even from years ago), which can
-    // cause one user's session to load a different user's file.
-    const res = await window.gapi.client.request({path:"https://www.googleapis.com/drive/v3/files",params:{q:`name='${FILE_NAME}' and trashed=false and 'me' in owners`,fields:"files(id)"}});
+    const res = await window.gapi.client.request({path:"https://www.googleapis.com/drive/v3/files",params:{q:`name='${FILE_NAME}' and trashed=false`,fields:"files(id)"}});
     return res.result.files?.[0]?.id||null;
   }
   async function loadFromDrive(){
@@ -134,9 +132,20 @@ function App(){
   }
   function updateData(fn){
     setData(prev=>{
+      // Save to undo stack before applying change
+      setUndoStack(stack=>[prev,...stack.slice(0,19)]);
       const next=fn(prev);
       if(signedIn){ clearTimeout(saveTimer.current); setSyncStatus("saving"); saveTimer.current=setTimeout(async()=>{ try{await saveDriveFile(next);setSyncStatus("saved");}catch(err){console.error(err);setSyncStatus("error");} },1200); }
       return next;
+    });
+  }
+  function undo(){
+    setUndoStack(stack=>{
+      if(stack.length===0)return stack;
+      const [prev,...rest] = stack;
+      setData(prev);
+      if(signedIn){ clearTimeout(saveTimer.current); setSyncStatus("saving"); saveTimer.current=setTimeout(async()=>{ try{await saveDriveFile(prev);setSyncStatus("saved");}catch(err){console.error(err);setSyncStatus("error");} },1200); }
+      return rest;
     });
   }
 
@@ -144,19 +153,21 @@ function App(){
   function addTask(projectId,text,asPriority=false){
     if(!text.trim()||!projectId)return;
     updateData(d=>{
-      const minOrder = Math.min(0,...d.tasks.filter(t=>t.projectId===projectId).map(t=>t.order||0));
-      const minPriOrder = Math.min(0,...d.tasks.filter(t=>t.priority&&!t.done).map(t=>t.priorityOrder||0));
-      return {...d,tasks:[{id:uid(),projectId,text:text.trim(),priority:asPriority,done:false,notes:"",createdAt:today(),order:minOrder-1,priorityOrder:asPriority?minPriOrder-1:0},...d.tasks]};
+      const maxOrder = Math.max(-1,...d.tasks.filter(t=>t.projectId===projectId).map(t=>t.order||0));
+      const maxPriOrder = Math.max(-1,...d.tasks.filter(t=>t.priority&&!t.done).map(t=>t.priorityOrder||0));
+      return {...d,tasks:[...d.tasks,{id:uid(),projectId,text:text.trim(),priority:asPriority,done:false,notes:"",createdAt:today(),order:maxOrder+1,priorityOrder:asPriority?maxPriOrder+1:0,completedAt:null}]};
     });
   }
-  function toggleDone(id){ updateData(d=>({...d,tasks:d.tasks.map(t=>t.id===id?{...t,done:!t.done}:t)})); }
+  function toggleDone(id){
+    updateData(d=>({...d,tasks:d.tasks.map(t=>t.id===id?{...t,done:!t.done,completedAt:t.done?null:nowTs()}:t)}));
+  }
   function togglePriority(id){
     updateData(d=>{
       const t = d.tasks.find(x=>x.id===id);
       if(!t)return d;
       if(!t.priority){
-        const minPriOrder = Math.min(0,...d.tasks.filter(x=>x.priority&&!x.done).map(x=>x.priorityOrder||0));
-        return {...d,tasks:d.tasks.map(x=>x.id===id?{...x,priority:true,priorityOrder:minPriOrder-1}:x)};
+        const maxPriOrder = Math.max(-1,...d.tasks.filter(x=>x.priority&&!x.done).map(x=>x.priorityOrder||0));
+        return {...d,tasks:d.tasks.map(x=>x.id===id?{...x,priority:true,priorityOrder:maxPriOrder+1}:x)};
       }
       return {...d,tasks:d.tasks.map(x=>x.id===id?{...x,priority:false}:x)};
     });
@@ -167,14 +178,8 @@ function App(){
   function reorderProjectTasks(projectId,newOrderIds){
     updateData(d=>{
       let tasks = d.tasks.map(t=>t.projectId===projectId?{...t,order:newOrderIds.indexOf(t.id)}:t);
-      // Sync priorityOrder for this project's priority tasks to match their new relative order
-      const priorityTasksHere = newOrderIds
-        .map(id=>tasks.find(t=>t.id===id))
-        .filter(t=>t && t.priority && !t.done);
+      const priorityTasksHere = newOrderIds.map(id=>tasks.find(t=>t.id===id)).filter(t=>t&&t.priority&&!t.done);
       if(priorityTasksHere.length>1){
-        const otherPriorityTasks = tasks.filter(t=>t.priority&&!t.done&&t.projectId!==projectId).sort((a,b)=>(a.priorityOrder||0)-(b.priorityOrder||0));
-        const minExistingOrder = Math.min(...priorityTasksHere.map(t=>t.priorityOrder||0));
-        // Re-number: keep other projects' priority tasks' relative order, splice this project's tasks back at the same approximate position
         const allPriority = tasks.filter(t=>t.priority&&!t.done).sort((a,b)=>(a.priorityOrder||0)-(b.priorityOrder||0));
         const withoutThisProject = allPriority.filter(t=>t.projectId!==projectId);
         const insertAt = allPriority.findIndex(t=>t.projectId===projectId);
@@ -187,43 +192,45 @@ function App(){
   }
   function reorderFrontBurner(newOrderIds){
     updateData(d=>{
-      // Update priorityOrder for the dragged set
       let tasks = d.tasks.map(t=>newOrderIds.includes(t.id)?{...t,priorityOrder:newOrderIds.indexOf(t.id)}:t);
-      // For each project touched, also reorder its full task list to match relative order of the moved priority tasks
       const touchedProjectIds = new Set(newOrderIds.map(id=>tasks.find(t=>t.id===id)?.projectId).filter(Boolean));
       touchedProjectIds.forEach(pid=>{
         const projTasks = tasks.filter(t=>t.projectId===pid).sort((a,b)=>(a.order||0)-(b.order||0));
-        const priorityIdsInThisProject = newOrderIds.filter(id=>{
-          const t = tasks.find(x=>x.id===id);
-          return t && t.projectId===pid;
-        });
-        // Build new order: priority tasks (in their new relative order) keep their relative slots,
-        // non-priority tasks keep their existing relative order, merged by original position of first priority task
+        const priorityIdsInThisProject = newOrderIds.filter(id=>{ const t=tasks.find(x=>x.id===id); return t&&t.projectId===pid; });
         const nonPriorityTasks = projTasks.filter(t=>!priorityIdsInThisProject.includes(t.id));
-        // Find earliest original index among the priority tasks to splice back in at roughly the same place
         const originalIndices = priorityIdsInThisProject.map(id=>projTasks.findIndex(t=>t.id===id));
         const insertAt = Math.min(...originalIndices);
         const merged = [...nonPriorityTasks];
         merged.splice(insertAt,0,...priorityIdsInThisProject.map(id=>projTasks.find(t=>t.id===id)));
-        merged.forEach((t,idx)=>{
-          tasks = tasks.map(x=>x.id===t.id?{...x,order:idx}:x);
-        });
+        merged.forEach((t,idx)=>{ tasks = tasks.map(x=>x.id===t.id?{...x,order:idx}:x); });
       });
       return {...d,tasks};
     });
   }
-  function saveTask(updated){ updateData(d=>({...d,tasks:d.tasks.map(t=>t.id===updated.id?updated:t)})); setModalTask(null); }
+  function saveTask(updated){ updateData(d=>({...d,tasks:d.tasks.map(t=>t.id===updated.id?updated:t)})); }
   function deleteTask(id){ updateData(d=>({...d,tasks:d.tasks.filter(t=>t.id!==id)})); setModalTask(null); }
   function addProject(name){
     if(!name.trim())return;
     const maxOrder = Math.max(-1,...data.projects.map(p=>p.order||0));
-    const p={id:uid(),name:name.trim(),color:COLORS[data.projects.length%COLORS.length],createdAt:today(),order:maxOrder+1};
+    const p={id:uid(),name:name.trim(),color:COLORS[data.projects.length%COLORS.length],createdAt:today(),order:maxOrder+1,archived:false};
     updateData(d=>({...d,projects:[...d.projects,p]}));
     setShowAddProject(false); setNewProjectName(""); setView(p.id);
   }
   function deleteProject(id){
     updateData(d=>({projects:d.projects.filter(p=>p.id!==id),tasks:d.tasks.filter(t=>t.projectId!==id)}));
     setView("projects");
+  }
+  function archiveProject(id){
+    updateData(d=>({...d,projects:d.projects.map(p=>p.id===id?{...p,archived:true}:p)}));
+    setView("projects");
+  }
+  function unarchiveProject(id){
+    updateData(d=>({...d,projects:d.projects.map(p=>p.id===id?{...p,archived:false}:p)}));
+  }
+  function renameProject(id,name){
+    if(!name.trim())return;
+    updateData(d=>({...d,projects:d.projects.map(p=>p.id===id?{...p,name:name.trim()}:p)}));
+    setEditingProjectId(null); setEditingProjectName("");
   }
   function importTasks(projectName,text){
     if(!text.trim())return;
@@ -233,7 +240,7 @@ function App(){
       let proj = projects.find(p=>p.name.toLowerCase()===projectName.trim().toLowerCase());
       if(!proj && projectName.trim()){
         const maxOrder = Math.max(-1,...projects.map(p=>p.order||0));
-        proj = {id:uid(),name:projectName.trim(),color:COLORS[projects.length%COLORS.length],createdAt:today(),order:maxOrder+1};
+        proj = {id:uid(),name:projectName.trim(),color:COLORS[projects.length%COLORS.length],createdAt:today(),order:maxOrder+1,archived:false};
         projects = [...projects,proj];
       }
       if(!proj) return d;
@@ -245,7 +252,7 @@ function App(){
         const isPriority = /\(priority\)|★|\*priority\*/i.test(clean);
         clean = clean.replace(/\(priority\)|★|\*priority\*/gi,"").trim();
         if(isPriority) priCounter++;
-        return {id:uid(),projectId:proj.id,text:clean,priority:isPriority,done:false,notes:"",createdAt:today(),order:baseOrder+i,priorityOrder:isPriority?priCounter:0};
+        return {id:uid(),projectId:proj.id,text:clean,priority:isPriority,done:false,notes:"",createdAt:today(),order:baseOrder+i,priorityOrder:isPriority?priCounter:0,completedAt:null};
       }).filter(t=>t.text.length>0);
       return {projects,tasks:[...d.tasks,...newTasks]};
     });
@@ -279,54 +286,67 @@ function App(){
       )
     );
   }
-
   if(!data){ return e("div",{style:{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}},"Loading…"); }
 
   // ── Task row ─────────────────────────────────────────────────────────────
   function TaskRow({task,showProjectName=false,arrowControls=null}){
     const proj = projectMap[task.projectId];
-    return e("div",{style:{display:"flex",alignItems:"flex-start",gap:8,padding:"11px 14px",background:"#fff",borderRadius:8,border:"1px solid #E2E8F0",marginBottom:4,opacity:task.done?0.45:1}},
+    return e("div",{style:{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",background:"#fff",borderRadius:8,border:"1px solid #E2E8F0",marginBottom:4,opacity:task.done?0.45:1}},
       arrowControls,
-      e("button",{style:{background:"none",border:"none",cursor:"pointer",padding:0,marginTop:2,flexShrink:0},onClick:()=>toggleDone(task.id)},
-        e("div",{style:{width:18,height:18,borderRadius:4,border:`2px solid ${task.done?"#2563EB":"#CBD5E1"}`,background:task.done?"#2563EB":"transparent",display:"flex",alignItems:"center",justifyContent:"center"}},
-          task.done&&e("svg",{width:10,height:8,viewBox:"0 0 10 8"},e("path",{d:"M1 4l3 3 5-6",stroke:"#fff",strokeWidth:1.8,fill:"none",strokeLinecap:"round",strokeLinejoin:"round"}))
-        )
-      ),
       e("div",{style:{flex:1,minWidth:0,cursor:"pointer"},onClick:()=>setModalTask({...task})},
         e("div",{style:{fontSize:15,color:"#1E293B",lineHeight:1.4,textDecoration:task.done?"line-through":"none"}},
           task.text,
-          showProjectName&&proj&&e("span",{style:{color:"#94A3B8",fontWeight:400}}," ("+proj.name+")")
+          showProjectName&&proj&&e("span",{style:{color:"#94A3B8",fontWeight:400,fontSize:13}}," ("+proj.name+")")
         ),
-        task.notes&&e("div",{style:{fontSize:12,color:"#64748B",marginTop:3}},task.notes)
+        task.notes&&e("div",{style:{fontSize:12,color:"#64748B",marginTop:2}},task.notes)
       ),
-      e("button",{style:{background:"none",border:"none",cursor:"pointer",fontSize:20,padding:"0 2px",flexShrink:0,color:task.priority?"#F59E0B":"#CBD5E1",lineHeight:1},onClick:()=>togglePriority(task.id)},"★")
+      e("button",{style:{background:"none",border:"none",cursor:"pointer",fontSize:20,padding:"0 4px",flexShrink:0,color:task.priority?"#F59E0B":"#CBD5E1",lineHeight:1},onClick:(ev)=>{ev.stopPropagation();togglePriority(task.id);}},"★"),
+      e("button",{style:{background:"none",border:"none",cursor:"pointer",padding:0,flexShrink:0},onClick:(ev)=>{ev.stopPropagation();toggleDone(task.id);}},
+        e("div",{style:{width:20,height:20,borderRadius:4,border:`2px solid ${task.done?"#2563EB":"#CBD5E1"}`,background:task.done?"#2563EB":"transparent",display:"flex",alignItems:"center",justifyContent:"center"}},
+          task.done&&e("svg",{width:11,height:9,viewBox:"0 0 10 8"},e("path",{d:"M1 4l3 3 5-6",stroke:"#fff",strokeWidth:1.8,fill:"none",strokeLinecap:"round",strokeLinejoin:"round"}))
+        )
+      )
     );
   }
 
-  // ── Generic up/down reorder list wrapper ────────────────────────────────
+  // ── Reorder list with ▲▼ T B buttons ────────────────────────────────────
   function DragList({items,getId,onReorder,renderItem}){
     function move(idx,dir){
-      const newIdx = idx+dir;
+      const newIdx=idx+dir;
       if(newIdx<0||newIdx>=items.length)return;
-      const ids = items.map(getId);
-      const tmp = ids[idx]; ids[idx]=ids[newIdx]; ids[newIdx]=tmp;
+      const ids=items.map(getId);
+      const tmp=ids[idx]; ids[idx]=ids[newIdx]; ids[newIdx]=tmp;
+      onReorder(ids);
+    }
+    function moveToTop(idx){
+      if(idx===0)return;
+      const ids=items.map(getId);
+      const [item]=ids.splice(idx,1);
+      ids.unshift(item);
+      onReorder(ids);
+    }
+    function moveToBottom(idx){
+      if(idx===items.length-1)return;
+      const ids=items.map(getId);
+      const [item]=ids.splice(idx,1);
+      ids.push(item);
       onReorder(ids);
     }
     return e("div",null, items.map((item,idx)=>{
-      const id = getId(item);
+      const id=getId(item);
+      const n=items.length;
+      const btnStyle=(disabled)=>({background:"#F1F5F9",border:"none",borderRadius:4,width:22,height:18,cursor:disabled?"default":"pointer",color:disabled?"#CBD5E1":"#475569",fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",padding:0,fontWeight:600});
       const arrowControls = e("div",{style:{display:"flex",flexDirection:"column",gap:2,flexShrink:0}},
-        e("button",{
-          style:{background:"#F1F5F9",border:"none",borderRadius:4,width:22,height:18,cursor:idx===0?"default":"pointer",color:idx===0?"#CBD5E1":"#475569",fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",padding:0},
-          disabled:idx===0,
-          onClick:(ev)=>{ev.stopPropagation();move(idx,-1);}
-        },"▲"),
-        e("button",{
-          style:{background:"#F1F5F9",border:"none",borderRadius:4,width:22,height:18,cursor:idx===items.length-1?"default":"pointer",color:idx===items.length-1?"#CBD5E1":"#475569",fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",padding:0},
-          disabled:idx===items.length-1,
-          onClick:(ev)=>{ev.stopPropagation();move(idx,1);}
-        },"▼")
+        e("div",{style:{display:"flex",gap:2}},
+          e("button",{style:btnStyle(idx===0),disabled:idx===0,onClick:(ev)=>{ev.stopPropagation();moveToTop(idx);}},"T"),
+          e("button",{style:btnStyle(idx===0),disabled:idx===0,onClick:(ev)=>{ev.stopPropagation();move(idx,-1);}},"▲")
+        ),
+        e("div",{style:{display:"flex",gap:2}},
+          e("button",{style:btnStyle(idx===n-1),disabled:idx===n-1,onClick:(ev)=>{ev.stopPropagation();move(idx,1);}},"▼"),
+          e("button",{style:btnStyle(idx===n-1),disabled:idx===n-1,onClick:(ev)=>{ev.stopPropagation();moveToBottom(idx);}},"B")
+        )
       );
-      return e("div",{key:id}, renderItem(item,arrowControls));
+      return e("div",{key:id},renderItem(item,arrowControls));
     }));
   }
 
@@ -336,8 +356,8 @@ function App(){
     const [selProj,setSelProj]=React.useState(projectId||data.projects[0]?.id||"");
     function submit(){ if(!text.trim())return; addTask(asPriority?selProj:projectId,text,asPriority); setText(""); }
     return e("div",{style:{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}},
-      asPriority&&e("select",{style:{padding:"10px 10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:14,background:"#fff",color:"#334155",maxWidth:200},value:selProj,onChange:ev=>setSelProj(ev.target.value)},
-        data.projects.map(p=>e("option",{key:p.id,value:p.id},p.name))
+      asPriority&&e("select",{style:{padding:"10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:14,background:"#fff",color:"#334155",maxWidth:200},value:selProj,onChange:ev=>setSelProj(ev.target.value)},
+        data.projects.filter(p=>!p.archived).map(p=>e("option",{key:p.id,value:p.id},p.name))
       ),
       e("input",{style:{flex:1,minWidth:160,padding:"10px 12px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:15,background:"#fff",outline:"none"},placeholder:"Add task…",value:text,onChange:ev=>setText(ev.target.value),onKeyDown:ev=>ev.key==="Enter"&&submit()}),
       e("button",{style:{padding:"10px 16px",borderRadius:8,background:"#2563EB",color:"#fff",border:"none",fontSize:14,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"},onClick:submit},"+ Add")
@@ -347,15 +367,19 @@ function App(){
   // ── Top nav ──────────────────────────────────────────────────────────────
   const priorityCount = data.tasks.filter(t=>t.priority&&!t.done).length;
   const isProjectView = view!=="week"&&view!=="projects";
-  const topNav = e("div",{style:{background:"#0F172A",padding:"0 16px",display:"flex",alignItems:"center",gap:4,position:"sticky",top:0,zIndex:10}},
-    e("button",{style:{padding:"14px 16px",border:"none",background:"transparent",color:view==="week"?"#fff":"#64748B",fontSize:14,fontWeight:view==="week"?700:400,cursor:"pointer",borderBottom:view==="week"?"2px solid #2563EB":"2px solid transparent"},onClick:()=>setView("week")},
+  const topNav = e("div",{style:{background:"#0F172A",padding:"0 12px",display:"flex",alignItems:"center",gap:4,position:"sticky",top:0,zIndex:10}},
+    e("button",{style:{padding:"14px 14px",border:"none",background:"transparent",color:view==="week"?"#fff":"#64748B",fontSize:14,fontWeight:view==="week"?700:400,cursor:"pointer",borderBottom:view==="week"?"2px solid #2563EB":"2px solid transparent"},onClick:()=>setView("week")},
       "★ Front Burner"+(priorityCount>0?" ("+priorityCount+")":"")
     ),
-    e("button",{style:{padding:"14px 16px",border:"none",background:"transparent",color:(view==="projects"||isProjectView)?"#fff":"#64748B",fontSize:14,fontWeight:(view==="projects"||isProjectView)?700:400,cursor:"pointer",borderBottom:(view==="projects"||isProjectView)?"2px solid #2563EB":"2px solid transparent"},onClick:()=>setView("projects")},
+    e("button",{style:{padding:"14px 14px",border:"none",background:"transparent",color:(view==="projects"||isProjectView)?"#fff":"#64748B",fontSize:14,fontWeight:(view==="projects"||isProjectView)?700:400,cursor:"pointer",borderBottom:(view==="projects"||isProjectView)?"2px solid #2563EB":"2px solid transparent"},onClick:()=>setView("projects")},
       "Projects"
     ),
     e("div",{style:{flex:1}}),
-    e("span",{style:{fontSize:11,color:syncColor}},syncLabel)
+    undoStack.length>0&&e("button",{
+      style:{background:"none",border:"none",cursor:"pointer",color:"#64748B",fontSize:18,padding:"0 8px",lineHeight:1},
+      onClick:undo, title:"Undo last action"
+    },"↩"),
+    e("span",{style:{fontSize:11,color:syncColor,marginLeft:4}},syncLabel)
   );
 
   // ── Front Burner view ────────────────────────────────────────────────────
@@ -363,68 +387,114 @@ function App(){
   if(view==="week"){
     const priorityTasks = data.tasks.filter(t=>t.priority&&!t.done).sort((a,b)=>(a.priorityOrder||0)-(b.priorityOrder||0));
     const projectsInUse = new Set(priorityTasks.map(t=>t.projectId)).size;
+    const completedTasks = data.tasks.filter(t=>t.done).sort((a,b)=>(b.completedAt||0)-(a.completedAt||0));
 
     mainContent = e("div",{style:{padding:"16px"}},
       e("h2",{style:{fontSize:20,fontWeight:700,color:"#0F172A",marginBottom:4}},"Front Burner"),
       e("p",{style:{fontSize:13,color:"#64748B",marginBottom:16}},priorityCount+" priority task"+(priorityCount!==1?"s":"")+" across "+projectsInUse+" project"+(projectsInUse!==1?"s":"")),
-
-      e("div",{style:{marginBottom:24,paddingBottom:16,borderBottom:"1px solid #E2E8F0"}},
+      e("div",{style:{marginBottom:20,paddingBottom:16,borderBottom:"1px solid #E2E8F0"}},
         e("p",{style:{fontSize:12,color:"#94A3B8",marginBottom:6}},"Add a Front Burner task to a project:"),
         e(AddTaskBar,{asPriority:true})
       ),
-
       priorityCount===0&&e("div",{style:{textAlign:"center",padding:"40px 20px",color:"#94A3B8"}},
         e("div",{style:{fontSize:40,marginBottom:12}},"★"),
         e("p",{style:{fontSize:15}},"No priority tasks yet."),
         e("p",{style:{fontSize:13,marginTop:6}},"Star any task to add it here.")
       ),
-
-      e(DragList,{
-        items:priorityTasks,
-        getId:t=>t.id,
-        onReorder:reorderFrontBurner,
-        renderItem:(t,arrowControls)=>e(TaskRow,{key:t.id,task:t,showProjectName:true,arrowControls})
-      })
+      e(DragList,{items:priorityTasks,getId:t=>t.id,onReorder:reorderFrontBurner,renderItem:(t,ac)=>e(TaskRow,{key:t.id,task:t,showProjectName:true,arrowControls:ac})}),
+      completedTasks.length>0&&e("details",{style:{marginTop:24}},
+        e("summary",{style:{fontSize:13,color:"#94A3B8",cursor:"pointer",padding:"8px 0",fontWeight:600}},"✓ All Completed Tasks ("+completedTasks.length+")"),
+        e("div",{style:{marginTop:8}},
+          completedTasks.map(t=>{
+            const proj=projectMap[t.projectId];
+            const completedDate = t.completedAt ? new Date(t.completedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "";
+            return e("div",{key:t.id,style:{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#fff",borderRadius:8,border:"1px solid #E2E8F0",marginBottom:4,opacity:0.6}},
+              e("div",{style:{width:16,height:16,borderRadius:4,background:"#2563EB",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}},
+                e("svg",{width:9,height:7,viewBox:"0 0 10 8"},e("path",{d:"M1 4l3 3 5-6",stroke:"#fff",strokeWidth:1.8,fill:"none",strokeLinecap:"round",strokeLinejoin:"round"}))
+              ),
+              e("div",{style:{flex:1,minWidth:0}},
+                e("div",{style:{fontSize:14,color:"#475569",textDecoration:"line-through"}},t.text),
+                e("div",{style:{fontSize:11,color:"#94A3B8",marginTop:1}},
+                  (proj?proj.name:"")+(completedDate?" · "+completedDate:"")
+                )
+              )
+            );
+          })
+        )
+      )
     );
 
   // ── Projects list view ───────────────────────────────────────────────────
   } else if(view==="projects"){
-    const sortedProjects = [...data.projects].sort((a,b)=>(a.order||0)-(b.order||0));
+    const activeProjects = [...data.projects].filter(p=>!p.archived).sort((a,b)=>(a.order||0)-(b.order||0));
+    const archivedProjects = data.projects.filter(p=>p.archived);
+
     mainContent = e("div",{style:{padding:"16px"}},
       e("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:8}},
         e("h2",{style:{fontSize:20,fontWeight:700,color:"#0F172A"}},"Projects"),
-        e("div",{style:{display:"flex",gap:8}},
-          e("button",{style:{padding:"8px 14px",background:"#F1F5F9",color:"#334155",border:"none",borderRadius:8,fontSize:13,fontWeight:600,cursor:"pointer"},onClick:()=>setShowImport(true)},"📋 Import Plan"),
-          e("button",{style:{padding:"8px 14px",background:"#2563EB",color:"#fff",border:"none",borderRadius:8,fontSize:13,fontWeight:600,cursor:"pointer"},onClick:()=>setShowAddProject(true)},"+ New Project")
+        e("div",{style:{display:"flex",gap:8,flexWrap:"wrap"}},
+          e("button",{style:{padding:"8px 12px",background:"#F1F5F9",color:"#334155",border:"none",borderRadius:8,fontSize:13,fontWeight:600,cursor:"pointer"},onClick:()=>setShowImport(true)},"📋 Import"),
+          e("button",{style:{padding:"8px 12px",background:"#2563EB",color:"#fff",border:"none",borderRadius:8,fontSize:13,fontWeight:600,cursor:"pointer"},onClick:()=>setShowAddProject(true)},"+ New")
         )
       ),
-      data.projects.length===0&&e("div",{style:{textAlign:"center",padding:"40px 20px",color:"#94A3B8"}},
+      activeProjects.length===0&&e("div",{style:{textAlign:"center",padding:"40px 20px",color:"#94A3B8"}},
         e("p",{style:{fontSize:15}},"No projects yet."),
-        e("p",{style:{fontSize:13,marginTop:6}},"Tap + New Project to get started.")
+        e("p",{style:{fontSize:13,marginTop:6}},"Tap + New to get started.")
       ),
       e(DragList,{
-        items:sortedProjects,
+        items:activeProjects,
         getId:p=>p.id,
         onReorder:reorderProjects,
         renderItem:(p,arrowControls)=>{
           const pt=data.tasks.filter(t=>t.projectId===p.id);
           const pri=pt.filter(t=>t.priority&&!t.done).length;
           const done=pt.filter(t=>t.done).length;
-          return e("div",{key:p.id,
-            style:{display:"flex",alignItems:"center",gap:8,background:"#fff",border:"1px solid #E2E8F0",borderLeft:`4px solid ${p.color}`,borderRadius:8,padding:"14px 16px",marginBottom:10}
-          },
+          const isEditing = editingProjectId===p.id;
+          return e("div",{key:p.id,style:{display:"flex",alignItems:"center",gap:8,background:"#fff",border:"1px solid #E2E8F0",borderLeft:`4px solid ${p.color}`,borderRadius:8,padding:"12px 14px",marginBottom:8}},
             arrowControls,
-            e("div",{style:{flex:1,minWidth:0,cursor:"pointer"},onClick:()=>setView(p.id)},
-              e("div",{style:{fontSize:15,fontWeight:600,color:"#1E293B",marginBottom:6}},p.name),
-              e("div",{style:{display:"flex",gap:12,fontSize:13,color:"#64748B"}},
-                e("span",null,pt.length+" tasks"),
-                e("span",null,done+" done"),
-                pri>0&&e("span",{style:{color:"#F59E0B",fontWeight:600}},"★ "+pri+" Front Burner tasks")
-              )
+            e("div",{style:{flex:1,minWidth:0}},
+              isEditing
+                ? e("div",{style:{display:"flex",gap:6,alignItems:"center"}},
+                    e("input",{style:{flex:1,padding:"6px 8px",borderRadius:6,border:"1px solid #2563EB",fontSize:14,boxSizing:"border-box"},value:editingProjectName,autoFocus:true,
+                      onChange:ev=>setEditingProjectName(ev.target.value),
+                      onKeyDown:ev=>{ if(ev.key==="Enter")renameProject(p.id,editingProjectName); if(ev.key==="Escape"){setEditingProjectId(null);setEditingProjectName("");} }
+                    }),
+                    e("button",{style:{padding:"6px 10px",background:"#2563EB",color:"#fff",border:"none",borderRadius:6,fontSize:13,cursor:"pointer"},onClick:()=>renameProject(p.id,editingProjectName)},"Save"),
+                    e("button",{style:{padding:"6px 10px",background:"#F1F5F9",color:"#475569",border:"none",borderRadius:6,fontSize:13,cursor:"pointer"},onClick:()=>{setEditingProjectId(null);setEditingProjectName("");}},"Cancel")
+                  )
+                : e("div",{style:{cursor:"pointer"},onClick:()=>setView(p.id)},
+                    e("div",{style:{fontSize:15,fontWeight:600,color:"#1E293B",marginBottom:4}},p.name),
+                    e("div",{style:{display:"flex",gap:10,fontSize:12,color:"#64748B",flexWrap:"wrap"}},
+                      e("span",null,pt.length+" tasks"),
+                      e("span",null,done+" done"),
+                      pri>0&&e("span",{style:{color:"#F59E0B",fontWeight:600}},"★ "+pri+" Front Burner")
+                    )
+                  )
+            ),
+            !isEditing&&e("div",{style:{display:"flex",flexDirection:"column",gap:4,flexShrink:0}},
+              e("button",{style:{padding:"4px 8px",background:"#F1F5F9",color:"#475569",border:"none",borderRadius:6,fontSize:11,cursor:"pointer",whiteSpace:"nowrap"},
+                onClick:()=>{setEditingProjectId(p.id);setEditingProjectName(p.name);}},"✏️ Rename"),
+              e("button",{style:{padding:"4px 8px",background:"#FEF9EC",color:"#92400E",border:"none",borderRadius:6,fontSize:11,cursor:"pointer"},
+                onClick:()=>{ if(confirm("Archive this project? You can unarchive it later."))archiveProject(p.id); }},"📦 Archive")
             )
           );
         }
-      })
+      }),
+      archivedProjects.length>0&&e("details",{style:{marginTop:20}},
+        e("summary",{style:{fontSize:13,color:"#94A3B8",cursor:"pointer",padding:"8px 0",fontWeight:600}},"📦 Archived Projects ("+archivedProjects.length+")"),
+        e("div",{style:{marginTop:8}},
+          archivedProjects.map(p=>e("div",{key:p.id,style:{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,background:"#F8FAFC",border:"1px solid #E2E8F0",borderLeft:`4px solid ${p.color}`,borderRadius:8,padding:"12px 14px",marginBottom:8,opacity:0.7}},
+            e("div",null,
+              e("div",{style:{fontSize:14,fontWeight:600,color:"#475569"}},p.name),
+              e("div",{style:{fontSize:12,color:"#94A3B8",marginTop:2}},data.tasks.filter(t=>t.projectId===p.id).length+" tasks")
+            ),
+            e("div",{style:{display:"flex",gap:6}},
+              e("button",{style:{padding:"4px 10px",background:"#F1F5F9",color:"#475569",border:"none",borderRadius:6,fontSize:12,cursor:"pointer"},onClick:()=>unarchiveProject(p.id)},"Restore"),
+              e("button",{style:{padding:"4px 10px",background:"#FEF2F2",color:"#DC2626",border:"none",borderRadius:6,fontSize:12,cursor:"pointer"},onClick:()=>{if(confirm("Permanently delete this project and all its tasks?"))deleteProject(p.id);}},"Delete")
+            )
+          ))
+        )
+      )
     );
 
   // ── Individual project view ──────────────────────────────────────────────
@@ -434,32 +504,21 @@ function App(){
     else{
       const tasks=data.tasks.filter(t=>t.projectId===view);
       const open=tasks.filter(t=>!t.done).sort((a,b)=>(a.order||0)-(b.order||0));
-      const closed=tasks.filter(t=>t.done);
+      const closed=tasks.filter(t=>t.done).sort((a,b)=>(b.completedAt||0)-(a.completedAt||0));
       mainContent=e("div",{style:{padding:"16px"}},
-        e("div",{style:{display:"flex",alignItems:"center",gap:12,marginBottom:6}},
-          e("button",{style:{background:"none",border:"none",cursor:"pointer",color:"#64748B",fontSize:14,padding:0},onClick:()=>setView("projects")},"← Projects"),
-        ),
-        e("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,marginTop:8}},
+        e("button",{style:{background:"none",border:"none",cursor:"pointer",color:"#64748B",fontSize:14,padding:"0 0 12px 0"},onClick:()=>setView("projects")},"← Projects"),
+        e("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}},
           e("div",{style:{display:"flex",alignItems:"center",gap:10}},
             e("div",{style:{width:14,height:14,borderRadius:"50%",background:proj.color,flexShrink:0}}),
             e("div",null,
               e("h2",{style:{fontSize:20,fontWeight:700,margin:0,color:"#0F172A"}},proj.name),
               e("p",{style:{fontSize:13,color:"#64748B"}},open.length+" open · "+closed.length+" done")
             )
-          ),
-          e("button",{
-            style:{padding:"6px 12px",background:"#FEF2F2",color:"#DC2626",border:"none",borderRadius:8,fontSize:12,cursor:"pointer",whiteSpace:"nowrap"},
-            onClick:()=>{ if(confirm("Delete project and all its tasks?"))deleteProject(proj.id); }
-          },"Delete")
+          )
         ),
         e(AddTaskBar,{projectId:view}),
         e("div",{style:{marginTop:12}},
-          e(DragList,{
-            items:open,
-            getId:t=>t.id,
-            onReorder:(newIds)=>reorderProjectTasks(view,newIds),
-            renderItem:(t,arrowControls)=>e(TaskRow,{key:t.id,task:t,arrowControls})
-          })
+          e(DragList,{items:open,getId:t=>t.id,onReorder:(newIds)=>reorderProjectTasks(view,newIds),renderItem:(t,ac)=>e(TaskRow,{key:t.id,task:t,arrowControls:ac})})
         ),
         open.length===0&&e("p",{style:{color:"#94A3B8",textAlign:"center",padding:"20px 0",fontSize:14}},"No open tasks. Add one above."),
         closed.length>0&&e("details",{style:{marginTop:20}},
@@ -471,27 +530,38 @@ function App(){
   }
 
   // ── Edit task modal ──────────────────────────────────────────────────────
-  const modal = modalTask&&e("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:16},onClick:ev=>ev.target===ev.currentTarget&&setModalTask(null)},
-    e("div",{style:{background:"#fff",borderRadius:12,padding:24,width:"100%",maxWidth:480,boxShadow:"0 20px 60px rgba(0,0,0,.2)"}},
-      e("h3",{style:{fontSize:16,fontWeight:700,margin:"0 0 16px"}},"Edit Task"),
+  const modal = modalTask&&e("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"flex-start",justifyContent:"center",zIndex:100,padding:"16px",overflowY:"auto"},onClick:ev=>ev.target===ev.currentTarget&&setModalTask(null)},
+    e("div",{style:{background:"#fff",borderRadius:12,padding:20,width:"100%",maxWidth:520,boxShadow:"0 20px 60px rgba(0,0,0,.2)",marginTop:20}},
+      e("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}},
+        e("h3",{style:{fontSize:16,fontWeight:700,margin:0}},"Edit Task"),
+        e("button",{style:{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#94A3B8",padding:0},onClick:()=>setModalTask(null)},"×")
+      ),
       e("label",{style:{display:"block",fontSize:12,fontWeight:600,color:"#64748B",marginBottom:4}},"Task"),
-      e("input",{style:{width:"100%",padding:"10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:15,boxSizing:"border-box"},value:modalTask.text,onChange:ev=>setModalTask({...modalTask,text:ev.target.value})}),
-      e("label",{style:{display:"block",fontSize:12,fontWeight:600,color:"#64748B",margin:"12px 0 4px"}},"Project"),
-      e("select",{style:{width:"100%",padding:"10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:15,boxSizing:"border-box"},value:modalTask.projectId,onChange:ev=>setModalTask({...modalTask,projectId:ev.target.value})},
-        data.projects.map(p=>e("option",{key:p.id,value:p.id},p.name))
+      e("input",{style:{width:"100%",padding:"10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:15,boxSizing:"border-box"},value:modalTask.text,
+        onChange:ev=>{const updated={...modalTask,text:ev.target.value};setModalTask(updated);saveTask(updated);}}),
+      e("div",{style:{display:"flex",gap:12,marginTop:12}},
+        e("div",{style:{flex:1}},
+          e("label",{style:{display:"block",fontSize:12,fontWeight:600,color:"#64748B",marginBottom:4}},"Project"),
+          e("select",{style:{width:"100%",padding:"10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:14,boxSizing:"border-box"},value:modalTask.projectId,
+            onChange:ev=>{const updated={...modalTask,projectId:ev.target.value};setModalTask(updated);saveTask(updated);}},
+            data.projects.map(p=>e("option",{key:p.id,value:p.id},p.name))
+          )
+        ),
+        e("div",{style:{display:"flex",alignItems:"flex-end",paddingBottom:2}},
+          e("label",{style:{display:"flex",alignItems:"center",gap:6,fontSize:13,color:"#64748B",cursor:"pointer",whiteSpace:"nowrap"}},
+            e("input",{type:"checkbox",checked:modalTask.priority,
+              onChange:ev=>{const updated={...modalTask,priority:ev.target.checked};setModalTask(updated);saveTask(updated);}}),
+            "★ Front Burner"
+          )
+        )
       ),
       e("label",{style:{display:"block",fontSize:12,fontWeight:600,color:"#64748B",margin:"12px 0 4px"}},"Notes"),
-      e("textarea",{style:{width:"100%",padding:"10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:15,boxSizing:"border-box",height:80,resize:"vertical",fontFamily:"inherit"},value:modalTask.notes,onChange:ev=>setModalTask({...modalTask,notes:ev.target.value})}),
-      e("label",{style:{display:"flex",alignItems:"center",gap:8,fontSize:13,color:"#64748B",margin:"12px 0 0",cursor:"pointer"}},
-        e("input",{type:"checkbox",checked:modalTask.priority,onChange:ev=>setModalTask({...modalTask,priority:ev.target.checked})}),
-        "★ Include in Front Burner"
-      ),
-      e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:20}},
-        e("button",{style:{padding:"10px 14px",background:"#FEF2F2",color:"#DC2626",border:"none",borderRadius:8,fontSize:14,cursor:"pointer"},onClick:()=>{if(confirm("Delete this task?"))deleteTask(modalTask.id);}},"Delete"),
-        e("div",{style:{display:"flex",gap:8}},
-          e("button",{style:{padding:"10px 14px",background:"#F1F5F9",color:"#475569",border:"none",borderRadius:8,fontSize:14,cursor:"pointer"},onClick:()=>setModalTask(null)},"Cancel"),
-          e("button",{style:{padding:"10px 18px",background:"#2563EB",color:"#fff",border:"none",borderRadius:8,fontSize:14,fontWeight:600,cursor:"pointer"},onClick:()=>saveTask(modalTask)},"Save")
-        )
+      e("textarea",{style:{width:"100%",padding:"10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:14,boxSizing:"border-box",height:120,resize:"vertical",fontFamily:"inherit"},value:modalTask.notes,
+        placeholder:"Add any notes, details, or context…",
+        onChange:ev=>{const updated={...modalTask,notes:ev.target.value};setModalTask(updated);saveTask(updated);}}),
+      e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:16}},
+        e("button",{style:{padding:"8px 14px",background:"#FEF2F2",color:"#DC2626",border:"none",borderRadius:8,fontSize:13,cursor:"pointer"},onClick:()=>{if(confirm("Delete this task?"))deleteTask(modalTask.id);}},"Delete"),
+        e("button",{style:{padding:"8px 18px",background:"#F1F5F9",color:"#475569",border:"none",borderRadius:8,fontSize:13,cursor:"pointer"},onClick:()=>setModalTask(null)},"Close")
       )
     )
   );
@@ -513,11 +583,11 @@ function App(){
   const importModal = showImport&&e("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:16},onClick:ev=>ev.target===ev.currentTarget&&setShowImport(false)},
     e("div",{style:{background:"#fff",borderRadius:12,padding:24,width:"100%",maxWidth:520,boxShadow:"0 20px 60px rgba(0,0,0,.2)"}},
       e("h3",{style:{fontSize:16,fontWeight:700,margin:"0 0 8px"}},"Import Project Plan"),
-      e("p",{style:{fontSize:13,color:"#64748B",margin:"0 0 16px"}},"Paste a task list from Claude. Use a new line per task. Mark priority tasks with (priority) or ★."),
+      e("p",{style:{fontSize:13,color:"#64748B",margin:"0 0 16px"}},"Paste a task list from Claude. One task per line. Mark priority with (priority) or ★."),
       e("label",{style:{display:"block",fontSize:12,fontWeight:600,color:"#64748B",marginBottom:4}},"Project Name"),
-      e("input",{style:{width:"100%",padding:"10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:15,boxSizing:"border-box"},placeholder:"e.g. Agarwal Kitchen Remodel — type existing or new name",value:importProjectName,onChange:ev=>setImportProjectName(ev.target.value)}),
+      e("input",{style:{width:"100%",padding:"10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:15,boxSizing:"border-box"},placeholder:"Type existing or new project name",value:importProjectName,onChange:ev=>setImportProjectName(ev.target.value)}),
       e("label",{style:{display:"block",fontSize:12,fontWeight:600,color:"#64748B",margin:"12px 0 4px"}},"Tasks (one per line)"),
-      e("textarea",{style:{width:"100%",padding:"10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:14,boxSizing:"border-box",height:160,resize:"vertical",fontFamily:"inherit"},placeholder:"Submit permit application\nOrder cabinets from supplier\n★ Call client to confirm start date (priority)",value:importText,onChange:ev=>setImportText(ev.target.value)}),
+      e("textarea",{style:{width:"100%",padding:"10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:14,boxSizing:"border-box",height:160,resize:"vertical",fontFamily:"inherit"},placeholder:"Submit permit application\nOrder materials\n★ Call client to confirm start date (priority)",value:importText,onChange:ev=>setImportText(ev.target.value)}),
       e("div",{style:{display:"flex",justifyContent:"flex-end",gap:8,marginTop:20}},
         e("button",{style:{padding:"10px 14px",background:"#F1F5F9",color:"#475569",border:"none",borderRadius:8,fontSize:14,cursor:"pointer"},onClick:()=>setShowImport(false)},"Cancel"),
         e("button",{style:{padding:"10px 18px",background:"#2563EB",color:"#fff",border:"none",borderRadius:8,fontSize:14,fontWeight:600,cursor:"pointer"},onClick:()=>importTasks(importProjectName,importText)},"Import")
@@ -533,3 +603,4 @@ root.render(e(App));
 </script>
 </body>
 </html>
+
