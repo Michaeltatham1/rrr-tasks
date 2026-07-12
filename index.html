@@ -87,13 +87,26 @@ function App(){
           localStorage.setItem("rrr_was_signed_in","true");
           localStorage.setItem("rrr_token",resp.access_token);
           localStorage.setItem("rrr_token_exp", String(Date.now() + (resp.expires_in||3600)*1000 - 60000));
-          fetch("https://www.googleapis.com/oauth2/v3/userinfo",{headers:{Authorization:"Bearer "+resp.access_token}})
-            .then(r=>r.json()).then(info=>{ 
-              if(info.email){ 
-                localStorage.setItem("rrr_email",info.email); 
-                setUserHandle(info.email.split("@")[0]);
-              } 
-            }).catch(()=>{});
+          // Decode email from id_token if present (instant, no network call needed)
+          try{
+            if(resp.id_token){
+              const payload = JSON.parse(atob(resp.id_token.split(".")[1]));
+              if(payload.email){
+                localStorage.setItem("rrr_email",payload.email);
+                setUserHandle(payload.email.split("@")[0]);
+              }
+            }
+          }catch(ex){}
+          // Fallback: fetch userinfo if id_token not present
+          if(!localStorage.getItem("rrr_email")){
+            fetch("https://www.googleapis.com/oauth2/v3/userinfo",{headers:{Authorization:"Bearer "+resp.access_token}})
+              .then(r=>r.json()).then(info=>{
+                if(info.email){
+                  localStorage.setItem("rrr_email",info.email);
+                  setUserHandle(info.email.split("@")[0]);
+                }
+              }).catch(()=>{});
+          }
           setSignedIn(true); loadFromDrive();
         }
       });
