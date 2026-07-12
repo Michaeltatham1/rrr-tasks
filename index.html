@@ -60,6 +60,7 @@ function App(){
   const [showArchived,setShowArchived] = React.useState(false);
   const [undoStack,setUndoStack] = React.useState([]);
   const [userHandle,setUserHandle] = React.useState("");
+  const fileIdRef = React.useRef(null);
   const saveTimer = React.useRef(null);
   const tokenClient = React.useRef(null);
 
