@@ -69,6 +69,8 @@ function App(){
   const saveTimer = React.useRef(null);
   const tokenClient = React.useRef(null);
   const refreshTimer = React.useRef(null);
+  const pendingSave = React.useRef(null);
+  const [saveFailedBanner,setSaveFailedBanner] = React.useState(false);
 
   function scheduleTokenRefresh(){
     clearTimeout(refreshTimer.current);
@@ -127,6 +129,10 @@ function App(){
               }).catch(()=>{});
           }
           scheduleTokenRefresh();
+          // If there was a pending failed save, retry it now with fresh token
+          if(pendingSave.current){
+            attemptSave(pendingSave.current);
+          }
           setSignedIn(true); loadFromDrive();
         }
       });
@@ -170,12 +176,28 @@ function App(){
     fileIdRef.current=id;
     await window.gapi.client.request({path:`https://www.googleapis.com/upload/drive/v3/files/${id}`,method:"PATCH",params:{uploadType:"media"},headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
   }
+  async function attemptSave(payload){
+    try{
+      await saveDriveFile(payload);
+      setSyncStatus("saved");
+      setSaveFailedBanner(false);
+      pendingSave.current = null;
+    }catch(err){
+      console.error(err);
+      setSyncStatus("error");
+      pendingSave.current = payload;
+      setSaveFailedBanner(true);
+    }
+  }
   function updateData(fn){
     setData(prev=>{
-      // Save to undo stack before applying change
       setUndoStack(stack=>[prev,...stack.slice(0,19)]);
       const next=fn(prev);
-      if(signedIn){ clearTimeout(saveTimer.current); setSyncStatus("saving"); saveTimer.current=setTimeout(async()=>{ try{await saveDriveFile(next);setSyncStatus("saved");}catch(err){console.error(err);setSyncStatus("error");} },1200); }
+      if(signedIn){
+        clearTimeout(saveTimer.current);
+        setSyncStatus("saving");
+        saveTimer.current=setTimeout(()=>attemptSave(next),1200);
+      }
       return next;
     });
   }
@@ -184,9 +206,31 @@ function App(){
       if(stack.length===0)return stack;
       const [prev,...rest] = stack;
       setData(prev);
-      if(signedIn){ clearTimeout(saveTimer.current); setSyncStatus("saving"); saveTimer.current=setTimeout(async()=>{ try{await saveDriveFile(prev);setSyncStatus("saved");}catch(err){console.error(err);setSyncStatus("error");} },1200); }
+      if(signedIn){
+        clearTimeout(saveTimer.current);
+        setSyncStatus("saving");
+        saveTimer.current=setTimeout(()=>attemptSave(prev),1200);
+      }
       return rest;
     });
+  }
+  function retrySave(){
+    // Request fresh token, then re-save pending data
+    if(tokenClient.current){
+      const payload = pendingSave.current;
+      tokenClient.current.requestAccessToken({
+        prompt:"",
+        callback_override:(resp)=>{
+          if(resp.error){setSaveFailedBanner(true);return;}
+          localStorage.setItem("rrr_token",resp.access_token);
+          localStorage.setItem("rrr_token_exp",String(Date.now()+(resp.expires_in||3600)*1000-60000));
+          scheduleTokenRefresh();
+          if(payload) attemptSave(payload);
+        }
+      });
+      // Standard callback also handles it
+      tokenClient.current.requestAccessToken({prompt:""});
+    }
   }
 
   // ── CRUD ─────────────────────────────────────────────────────────────────
@@ -623,7 +667,23 @@ function App(){
     )
   );
 
-  return e("div",null, topNav, mainContent, modal, addProjectModal, importModal);
+  return e("div",null,
+    saveFailedBanner&&e("div",{style:{position:"fixed",top:0,left:0,right:0,zIndex:200,background:"#DC2626",color:"#fff",padding:"12px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,boxShadow:"0 4px 12px rgba(0,0,0,.3)"}},
+      e("div",null,
+        e("div",{style:{fontWeight:700,fontSize:15}},"⚠️ Changes not saved"),
+        e("div",{style:{fontSize:13,opacity:0.9,marginTop:2}},"Your last changes are held in memory. Tap below to sign in and save them.")
+      ),
+      e("button",{
+        style:{padding:"8px 16px",background:"#fff",color:"#DC2626",border:"none",borderRadius:8,fontSize:14,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0},
+        onClick:()=>tokenClient.current&&tokenClient.current.requestAccessToken({prompt:""})
+      },"Sign in & Save")
+    ),
+    topNav,
+    mainContent,
+    modal,
+    addProjectModal,
+    importModal
+  );
 }
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
