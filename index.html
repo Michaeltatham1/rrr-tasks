@@ -71,6 +71,31 @@ function App(){
   const refreshTimer = React.useRef(null);
   const pendingSave = React.useRef(null);
   const [saveFailedBanner,setSaveFailedBanner] = React.useState(false);
+  const [addTexts,setAddTexts] = React.useState({});
+  const [fbProj,setFbProj] = React.useState(()=>{ try{return localStorage.getItem("rrr_fb_proj")||"";}catch(ex){return "";} });
+  const loadedRef = React.useRef(false);      // true once Drive data has been loaded this session
+  const tokenWaiters = React.useRef([]);      // promises waiting on a token refresh
+  const refreshing = React.useRef(false);
+
+  function tokenMsLeft(){ return parseInt(localStorage.getItem("rrr_token_exp")||"0",10) - Date.now(); }
+  // Ask Google for a fresh token silently; resolves true/false. Never rejects.
+  function refreshTokenNow(){
+    return new Promise(resolve=>{
+      if(!tokenClient.current){ resolve(false); return; }
+      tokenWaiters.current.push(resolve);
+      if(refreshing.current) return;
+      refreshing.current = true;
+      setTimeout(()=>{ // safety: never hang forever
+        if(refreshing.current){ refreshing.current=false; const w=tokenWaiters.current; tokenWaiters.current=[]; w.forEach(f=>f(false)); }
+      },15000);
+      try{ tokenClient.current.requestAccessToken({prompt:""}); }
+      catch(ex){ refreshing.current=false; const w=tokenWaiters.current; tokenWaiters.current=[]; w.forEach(f=>f(false)); }
+    });
+  }
+  async function ensureFreshToken(){
+    if(tokenMsLeft() > 3*60*1000) return true;
+    return await refreshTokenNow();
+  }
 
   function scheduleTokenRefresh(){
     clearTimeout(refreshTimer.current);
@@ -103,8 +128,20 @@ function App(){
       tokenClient.current = window.google.accounts.oauth2.initTokenClient({
         client_id:CLIENT_ID, scope:SCOPES,
         hint: localStorage.getItem("rrr_email")||undefined,
+        error_callback:(err)=>{
+          console.error(err);
+          refreshing.current=false;
+          const w=tokenWaiters.current; tokenWaiters.current=[]; w.forEach(f=>f(false));
+        },
         callback:(resp)=>{
-          if(resp.error){console.error(resp);return;}
+          refreshing.current=false;
+          if(resp.error){
+            console.error(resp);
+            const w=tokenWaiters.current; tokenWaiters.current=[]; w.forEach(f=>f(false));
+            if(pendingSave.current) setSaveFailedBanner(true);
+            return;
+          }
+          try{ window.gapi.client.setToken({access_token:resp.access_token}); }catch(ex){}
           localStorage.setItem("rrr_was_signed_in","true");
           localStorage.setItem("rrr_token",resp.access_token);
           localStorage.setItem("rrr_token_exp", String(Date.now() + (resp.expires_in||3600)*1000 - 60000));
@@ -129,11 +166,14 @@ function App(){
               }).catch(()=>{});
           }
           scheduleTokenRefresh();
-          // If there was a pending failed save, retry it now with fresh token
+          const w=tokenWaiters.current; tokenWaiters.current=[]; w.forEach(f=>f(true));
+          setSignedIn(true);
+          // Only load from Drive once per session — never overwrite local edits on a token refresh
           if(pendingSave.current){
             attemptSave(pendingSave.current);
+          } else if(!loadedRef.current){
+            loadFromDrive();
           }
-          setSignedIn(true); loadFromDrive();
         }
       });
       setGapiReady(true);
@@ -141,11 +181,30 @@ function App(){
         tokenClient.current.requestAccessToken({prompt:""});
       }
     }
+    // Wake-up / reconnect handling: phones pause timers while asleep, so check on return
+    function onWake(){
+      if(document.visibilityState==="hidden") return;
+      if(!tokenClient.current || localStorage.getItem("rrr_was_signed_in")!=="true") return;
+      if(tokenMsLeft() < 5*60*1000 || pendingSave.current){
+        refreshTokenNow().then(ok=>{ if(ok && pendingSave.current) attemptSave(pendingSave.current); });
+      }
+    }
+    document.addEventListener("visibilitychange",onWake);
+    window.addEventListener("focus",onWake);
+    window.addEventListener("online",onWake);
+    function onBeforeUnload(ev){ if(pendingSave.current){ ev.preventDefault(); ev.returnValue=""; } }
+    window.addEventListener("beforeunload",onBeforeUnload);
     const interval = setInterval(()=>{
       if(window.gapi && !window.gapi.client){ initGapi(); }
       if(window.gapi && window.gapi.client && window.google && window.google.accounts){ clearInterval(interval); initGoogle(); }
     },200);
-    return ()=>clearInterval(interval);
+    return ()=>{
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange",onWake);
+      window.removeEventListener("focus",onWake);
+      window.removeEventListener("online",onWake);
+      window.removeEventListener("beforeunload",onBeforeUnload);
+    };
   },[]);
 
   // ── Drive ────────────────────────────────────────────────────────────────
@@ -157,12 +216,16 @@ function App(){
     try{
       setSyncStatus("saving");
       const id = await findFile();
-      if(!id){ setData(DEMO); await createDriveFile(DEMO); setSyncStatus("saved"); return; }
+      if(!id){ setData(DEMO); await createDriveFile(DEMO); loadedRef.current=true; setSyncStatus("saved"); return; }
       fileIdRef.current=id;
       const res = await window.gapi.client.request({path:`https://www.googleapis.com/drive/v3/files/${id}`,params:{alt:"media"}});
       const parsed = typeof res.result==="string"?JSON.parse(res.result):res.result;
-      setData(parsed); setSyncStatus("saved");
-    }catch(err){ console.error(err); setSyncStatus("error"); setData(DEMO); }
+      setData(parsed); loadedRef.current=true; setSyncStatus("saved");
+    }catch(err){
+      console.error(err); setSyncStatus("error");
+      // Don't replace real data with demo data just because a load failed; only fall back if nothing loaded yet
+      if(!loadedRef.current) setData(DEMO);
+    }
   }
   async function createDriveFile(payload){
     const b="rrr_boundary";
@@ -177,8 +240,20 @@ function App(){
     await window.gapi.client.request({path:`https://www.googleapis.com/upload/drive/v3/files/${id}`,method:"PATCH",params:{uploadType:"media"},headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
   }
   async function attemptSave(payload){
+    pendingSave.current = payload; // stays pending until Drive confirms
     try{
-      await saveDriveFile(payload);
+      await ensureFreshToken();
+      try{
+        await saveDriveFile(payload);
+      }catch(err1){
+        const st = err1 && (err1.status || (err1.result&&err1.result.error&&err1.result.error.code));
+        if(st===401 || st===403){
+          // token rejected: force a refresh and retry once
+          const ok = await refreshTokenNow();
+          if(!ok) throw err1;
+          await saveDriveFile(payload);
+        } else { throw err1; }
+      }
       setSyncStatus("saved");
       setSaveFailedBanner(false);
       pendingSave.current = null;
@@ -215,22 +290,12 @@ function App(){
     });
   }
   function retrySave(){
-    // Request fresh token, then re-save pending data
-    if(tokenClient.current){
-      const payload = pendingSave.current;
-      tokenClient.current.requestAccessToken({
-        prompt:"",
-        callback_override:(resp)=>{
-          if(resp.error){setSaveFailedBanner(true);return;}
-          localStorage.setItem("rrr_token",resp.access_token);
-          localStorage.setItem("rrr_token_exp",String(Date.now()+(resp.expires_in||3600)*1000-60000));
-          scheduleTokenRefresh();
-          if(payload) attemptSave(payload);
-        }
-      });
-      // Standard callback also handles it
-      tokenClient.current.requestAccessToken({prompt:""});
-    }
+    // Called from the red banner button (a user click, so a sign-in popup is allowed if needed)
+    if(!tokenClient.current) return;
+    refreshing.current=false;
+    tokenWaiters.current.push(ok=>{ if(!ok) setSaveFailedBanner(true); });
+    refreshing.current=true;
+    try{ tokenClient.current.requestAccessToken({prompt:""}); }catch(ex){ refreshing.current=false; }
   }
 
   // ── CRUD ─────────────────────────────────────────────────────────────────
@@ -421,9 +486,15 @@ function App(){
   }
 
   // ── Add task bar ─────────────────────────────────────────────────────────
-  function AddTaskBar({projectId,asPriority=false}){
-    const [text,setText]=React.useState("");
-    const [selProj,setSelProj]=React.useState(projectId||data.projects[0]?.id||"");
+  // Plain render function (NOT a component) so it is never remounted when App re-renders.
+  // State lives in App so the chosen project and typed text survive saves/syncs.
+  function renderAddTaskBar({projectId,asPriority=false}){
+    const key = asPriority?"__fb":projectId;
+    const text = addTexts[key]||"";
+    const setText = v=>setAddTexts(prev=>({...prev,[key]:v}));
+    const activeProjects = data.projects.filter(p=>!p.archived);
+    const selProj = activeProjects.some(p=>p.id===fbProj) ? fbProj : (activeProjects[0]?.id||"");
+    const setSelProj = v=>{ setFbProj(v); try{localStorage.setItem("rrr_fb_proj",v);}catch(ex){} };
     function submit(){ if(!text.trim())return; addTask(asPriority?selProj:projectId,text,asPriority); setText(""); }
     return e("div",{style:{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}},
       asPriority&&e("select",{style:{padding:"10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:14,background:"#fff",color:"#334155",maxWidth:200},value:selProj,onChange:ev=>setSelProj(ev.target.value)},
@@ -465,7 +536,7 @@ function App(){
       e("p",{style:{fontSize:13,color:"#64748B",marginBottom:16}},priorityCount+" priority task"+(priorityCount!==1?"s":"")+" across "+projectsInUse+" project"+(projectsInUse!==1?"s":"")),
       e("div",{style:{marginBottom:20,paddingBottom:16,borderBottom:"1px solid #E2E8F0"}},
         e("p",{style:{fontSize:12,color:"#94A3B8",marginBottom:6}},"Add a Front Burner task to a project:"),
-        e(AddTaskBar,{asPriority:true})
+        renderAddTaskBar({asPriority:true})
       ),
       priorityCount===0&&e("div",{style:{textAlign:"center",padding:"40px 20px",color:"#94A3B8"}},
         e("div",{style:{fontSize:40,marginBottom:12}},"★"),
@@ -587,7 +658,7 @@ function App(){
             )
           )
         ),
-        e(AddTaskBar,{projectId:view}),
+        renderAddTaskBar({projectId:view}),
         e("div",{style:{marginTop:12}},
           e(SortableList,{items:open,getId:t=>t.id,onReorder:(newIds)=>reorderProjectTasks(view,newIds),renderItem:(t)=>e(TaskRow,{key:t.id,task:t})})
         ),
