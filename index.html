@@ -182,15 +182,20 @@ function App(){
       }
     }
     // Wake-up / reconnect handling: phones pause timers while asleep, so check on return
+    let lastWake=0;
     function onWake(){
       if(document.visibilityState==="hidden") return;
       if(!tokenClient.current || localStorage.getItem("rrr_was_signed_in")!=="true") return;
+      if(!localStorage.getItem("rrr_token")) return;               // never signed in on this device: leave the sign-in button alone
+      if(refreshing.current) return;                               // a sign-in/refresh is already in progress
+      if(Date.now()-(window.__rrrManualSignIn||0) < 60000) return; // user just used the sign-in button/popup
+      if(Date.now()-lastWake < 60000) return;                      // at most one wake-refresh per minute
       if(tokenMsLeft() < 5*60*1000 || pendingSave.current){
+        lastWake=Date.now();
         refreshTokenNow().then(ok=>{ if(ok && pendingSave.current) attemptSave(pendingSave.current); });
       }
     }
     document.addEventListener("visibilitychange",onWake);
-    window.addEventListener("focus",onWake);
     window.addEventListener("online",onWake);
     function onBeforeUnload(ev){ if(pendingSave.current){ ev.preventDefault(); ev.returnValue=""; } }
     window.addEventListener("beforeunload",onBeforeUnload);
@@ -201,7 +206,6 @@ function App(){
     return ()=>{
       clearInterval(interval);
       document.removeEventListener("visibilitychange",onWake);
-      window.removeEventListener("focus",onWake);
       window.removeEventListener("online",onWake);
       window.removeEventListener("beforeunload",onBeforeUnload);
     };
@@ -421,7 +425,7 @@ function App(){
         e("p",{style:{fontSize:13,color:"#64748B",margin:"0 0 20px",textAlign:"center"}},"Renewal Remodeling & Repairs"),
         e("button",{
           style:{display:"flex",alignItems:"center",padding:"12px 24px",background:"#fff",border:"1px solid #E2E8F0",borderRadius:8,fontSize:15,fontWeight:500,cursor:"pointer",boxShadow:"0 1px 4px rgba(0,0,0,.08)"},
-          onClick:()=>gapiReady&&tokenClient.current&&tokenClient.current.requestAccessToken()
+          onClick:()=>{ window.__rrrManualSignIn=Date.now(); if(gapiReady&&tokenClient.current) tokenClient.current.requestAccessToken(); }
         },
           e("svg",{width:20,height:20,viewBox:"0 0 18 18",style:{marginRight:10}},
             e("path",{fill:"#4285F4",d:"M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z"}),
@@ -746,7 +750,7 @@ function App(){
       ),
       e("button",{
         style:{padding:"8px 16px",background:"#fff",color:"#DC2626",border:"none",borderRadius:8,fontSize:14,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0},
-        onClick:()=>tokenClient.current&&tokenClient.current.requestAccessToken({prompt:""})
+        onClick:()=>{ window.__rrrManualSignIn=Date.now(); if(tokenClient.current) tokenClient.current.requestAccessToken({prompt:""}); }
       },"Sign in & Save")
     ),
     topNav,
