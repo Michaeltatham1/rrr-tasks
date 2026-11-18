@@ -178,7 +178,8 @@ function App(){
       });
       setGapiReady(true);
       if(!trySavedToken() && localStorage.getItem("rrr_was_signed_in")==="true"){
-        tokenClient.current.requestAccessToken({prompt:""});
+        window.__rrrManualSignIn=Date.now(); // block wake-refresh while the start-up sign-in is running
+        refreshTokenNow();                   // registered request: only one sign-in at a time
       }
     }
     // Wake-up / reconnect handling: phones pause timers while asleep, so check on return
