@@ -104,9 +104,7 @@ function App(){
     if(msUntilRefresh <= 0) return;
     refreshTimer.current = setTimeout(()=>{
       // Silent refresh — no prompt, no popup
-      if(tokenClient.current){
-        tokenClient.current.requestAccessToken({prompt:""});
-      }
+      if(document.visibilityState==="visible" && !refreshing.current) refreshTokenNow();
     }, msUntilRefresh);
   }
 
@@ -177,10 +175,9 @@ function App(){
         }
       });
       setGapiReady(true);
-      if(!trySavedToken() && localStorage.getItem("rrr_was_signed_in")==="true"){
-        window.__rrrManualSignIn=Date.now(); // block wake-refresh while the start-up sign-in is running
-        refreshTokenNow();                   // registered request: only one sign-in at a time
-      }
+      // If the saved token has expired we do NOT auto-open Google's popup here: phones block or
+      // mangle popups that aren't started by a tap. The Sign in button (a real tap) handles it.
+      trySavedToken();
     }
     // Wake-up / reconnect handling: phones pause timers while asleep, so check on return
     let lastWake=0;
@@ -191,7 +188,8 @@ function App(){
       if(refreshing.current) return;                               // a sign-in/refresh is already in progress
       if(Date.now()-(window.__rrrManualSignIn||0) < 60000) return; // user just used the sign-in button/popup
       if(Date.now()-lastWake < 60000) return;                      // at most one wake-refresh per minute
-      if(tokenMsLeft() < 5*60*1000 || pendingSave.current){
+      const left=tokenMsLeft();
+      if(left > 0 && left < 5*60*1000){ // only renew a still-valid token; expired ones need a tap
         lastWake=Date.now();
         refreshTokenNow().then(ok=>{ if(ok && pendingSave.current) attemptSave(pendingSave.current); });
       }
