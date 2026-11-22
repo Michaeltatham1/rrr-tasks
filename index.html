@@ -92,21 +92,9 @@ function App(){
       catch(ex){ refreshing.current=false; const w=tokenWaiters.current; tokenWaiters.current=[]; w.forEach(f=>f(false)); }
     });
   }
-  async function ensureFreshToken(){
-    if(tokenMsLeft() > 3*60*1000) return true;
-    return await refreshTokenNow();
-  }
+  async function ensureFreshToken(){ return tokenMsLeft() > 0; } // never opens a popup by itself
 
-  function scheduleTokenRefresh(){
-    clearTimeout(refreshTimer.current);
-    const exp = parseInt(localStorage.getItem("rrr_token_exp")||"0",10);
-    const msUntilRefresh = exp - Date.now() - 10*60*1000; // 10 min before expiry
-    if(msUntilRefresh <= 0) return;
-    refreshTimer.current = setTimeout(()=>{
-      // Silent refresh — no prompt, no popup
-      if(document.visibilityState==="visible" && !refreshing.current) refreshTokenNow();
-    }, msUntilRefresh);
-  }
+  function scheduleTokenRefresh(){ /* intentionally empty: no automatic background sign-in */ }
 
   // ── Google init ──────────────────────────────────────────────────────────
   React.useEffect(()=>{
@@ -179,23 +167,6 @@ function App(){
       // mangle popups that aren't started by a tap. The Sign in button (a real tap) handles it.
       trySavedToken();
     }
-    // Wake-up / reconnect handling: phones pause timers while asleep, so check on return
-    let lastWake=0;
-    function onWake(){
-      if(document.visibilityState==="hidden") return;
-      if(!tokenClient.current || localStorage.getItem("rrr_was_signed_in")!=="true") return;
-      if(!localStorage.getItem("rrr_token")) return;               // never signed in on this device: leave the sign-in button alone
-      if(refreshing.current) return;                               // a sign-in/refresh is already in progress
-      if(Date.now()-(window.__rrrManualSignIn||0) < 60000) return; // user just used the sign-in button/popup
-      if(Date.now()-lastWake < 60000) return;                      // at most one wake-refresh per minute
-      const left=tokenMsLeft();
-      if(left > 0 && left < 5*60*1000){ // only renew a still-valid token; expired ones need a tap
-        lastWake=Date.now();
-        refreshTokenNow().then(ok=>{ if(ok && pendingSave.current) attemptSave(pendingSave.current); });
-      }
-    }
-    document.addEventListener("visibilitychange",onWake);
-    window.addEventListener("online",onWake);
     function onBeforeUnload(ev){ if(pendingSave.current){ ev.preventDefault(); ev.returnValue=""; } }
     window.addEventListener("beforeunload",onBeforeUnload);
     const interval = setInterval(()=>{
@@ -204,8 +175,6 @@ function App(){
     },200);
     return ()=>{
       clearInterval(interval);
-      document.removeEventListener("visibilitychange",onWake);
-      window.removeEventListener("online",onWake);
       window.removeEventListener("beforeunload",onBeforeUnload);
     };
   },[]);
@@ -250,12 +219,7 @@ function App(){
         await saveDriveFile(payload);
       }catch(err1){
         const st = err1 && (err1.status || (err1.result&&err1.result.error&&err1.result.error.code));
-        if(st===401 || st===403){
-          // token rejected: force a refresh and retry once
-          const ok = await refreshTokenNow();
-          if(!ok) throw err1;
-          await saveDriveFile(payload);
-        } else { throw err1; }
+        throw err1; // shows the red banner; one tap on "Sign in & Save" fixes it
       }
       setSyncStatus("saved");
       setSaveFailedBanner(false);
@@ -749,7 +713,7 @@ function App(){
       ),
       e("button",{
         style:{padding:"8px 16px",background:"#fff",color:"#DC2626",border:"none",borderRadius:8,fontSize:14,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0},
-        onClick:()=>{ window.__rrrManualSignIn=Date.now(); if(tokenClient.current) tokenClient.current.requestAccessToken({prompt:""}); }
+        onClick:()=>{ window.__rrrManualSignIn=Date.now(); if(tokenClient.current) tokenClient.current.requestAccessToken(); }
       },"Sign in & Save")
     ),
     topNav,
