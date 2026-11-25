@@ -30,6 +30,19 @@ const CLIENT_ID = "610736844681-t0p32thbogua2rtuvn7niavpnnukjbd3.apps.googleuser
 const FILE_NAME = "rrr_project_tasks.json";
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
 const COLORS = ["#2563EB","#16A34A","#DC2626","#D97706","#7C3AED","#0891B2","#DB2777","#65A30D","#EA580C","#4F46E5"];
+class ModalGuard extends React.Component{
+  constructor(p){ super(p); this.state={err:null}; }
+  static getDerivedStateFromError(err){ return {err}; }
+  render(){
+    if(this.state.err){
+      return e("div",{style:{background:"#fff",border:"3px solid #DC2626",borderRadius:12,padding:16,margin:"16px auto",width:"calc(100% - 24px)",maxWidth:560,boxSizing:"border-box"}},
+        e("div",{style:{fontWeight:700,color:"#DC2626",marginBottom:8}},"This task could not be opened"),
+        e("div",{style:{fontSize:13,color:"#334155",wordBreak:"break-word",marginBottom:12}},String(this.state.err&&this.state.err.message||this.state.err)),
+        e("button",{style:{padding:"8px 18px",borderRadius:8,border:"none",background:"#F1F5F9",fontSize:14},onClick:this.props.onClose},"Close"));
+    }
+    return this.props.children;
+  }
+}
 function uid(){ return Math.random().toString(36).slice(2,10); }
 function today(){ return new Date().toISOString().slice(0,10); }
 function nowTs(){ return Date.now(); }
@@ -639,8 +652,8 @@ function App(){
   }
 
   // ── Edit task modal ──────────────────────────────────────────────────────
-  const modal = modalTask&&e("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"flex-start",justifyContent:"center",zIndex:100,padding:"12px",overflowY:"auto"},onClick:ev=>ev.target===ev.currentTarget&&setModalTask(null)},
-    e("div",{style:{background:"#fff",borderRadius:12,padding:16,width:"100%",maxWidth:560,boxShadow:"0 20px 60px rgba(0,0,0,.2)",marginTop:16}},
+  const modal = modalTask&&e("div",{style:{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,.5)",zIndex:1000,overflowY:"auto",WebkitOverflowScrolling:"touch",boxSizing:"border-box"},onClick:ev=>ev.target===ev.currentTarget&&setModalTask(null)},
+    e(ModalGuard,{onClose:()=>setModalTask(null)},e("div",{style:{background:"#fff",borderRadius:12,padding:16,width:"calc(100% - 24px)",maxWidth:560,boxSizing:"border-box",boxShadow:"0 20px 60px rgba(0,0,0,.2)",margin:"16px auto"}},
       e("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}},
         e("h3",{style:{fontSize:16,fontWeight:700,margin:0}},"Edit Task"),
         e("button",{style:{background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#94A3B8",padding:0,lineHeight:1},onClick:()=>setModalTask(null)},"×")
@@ -648,7 +661,7 @@ function App(){
       // Task label + input on one line
       e("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:8}},
         e("label",{style:{fontSize:13,fontWeight:600,color:"#64748B",whiteSpace:"nowrap",width:52,flexShrink:0}},"Task"),
-        e("input",{style:{flex:1,padding:"8px 10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:14,boxSizing:"border-box"},value:modalTask.text,
+        e("input",{style:{flex:1,padding:"8px 10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:14,boxSizing:"border-box"},value:modalTask.text||"",
           onChange:ev=>{const updated={...modalTask,text:ev.target.value};setModalTask(updated);saveTask(updated);}})
       ),
       // Project + Front Burner checkbox on one line
@@ -666,14 +679,14 @@ function App(){
       ),
       // Notes label above, large textarea
       e("label",{style:{display:"block",fontSize:13,fontWeight:600,color:"#64748B",marginBottom:4}},"Notes"),
-      e("textarea",{style:{width:"100%",padding:"10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:14,boxSizing:"border-box",height:"min(50vh, 320px)",resize:"vertical",fontFamily:"inherit",lineHeight:1.5},value:modalTask.notes,
+      e("textarea",{style:{width:"100%",padding:"10px",borderRadius:8,border:"1px solid #E2E8F0",fontSize:14,boxSizing:"border-box",height:"min(50vh, 320px)",resize:"vertical",fontFamily:"inherit",lineHeight:1.5},value:modalTask.notes||"",
         placeholder:"Add any notes, details, or context…",
         onChange:ev=>{const updated={...modalTask,notes:ev.target.value};setModalTask(updated);saveTask(updated);}}),
       e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:12}},
         e("button",{style:{padding:"8px 14px",background:"#FEF2F2",color:"#DC2626",border:"none",borderRadius:8,fontSize:13,cursor:"pointer"},onClick:()=>{if(confirm("Delete this task?"))deleteTask(modalTask.id);}},"Delete"),
         e("button",{style:{padding:"8px 18px",background:"#F1F5F9",color:"#475569",border:"none",borderRadius:8,fontSize:13,cursor:"pointer"},onClick:()=>setModalTask(null)},"Close")
       )
-    )
+    ))
   );
 
   // ── Add project modal ────────────────────────────────────────────────────
