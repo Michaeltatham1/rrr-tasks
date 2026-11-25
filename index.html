@@ -27,7 +27,7 @@
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 <script>
 // ---- debug: show any uncaught error on screen, with version label ----
-const BUILD_LABEL = "build 24Nov-C";
+const BUILD_LABEL = "build 24Nov-D";
 (function(){
   function show(msg){
     try{
@@ -671,7 +671,7 @@ function App(){
   }
 
   // ── Edit task modal ──────────────────────────────────────────────────────
-  const modal = modalTask&&e("div",{style:{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,.5)",zIndex:1000,overflowY:"auto",WebkitOverflowScrolling:"touch",boxSizing:"border-box"},onClick:ev=>ev.target===ev.currentTarget&&setModalTask(null)},
+  const modal = modalTask&&e("div",{style:{padding:"4px 0 80px",boxSizing:"border-box",background:"#F8FAFC",minHeight:"70vh"},onClick:undefined},
     e(ModalGuard,{onClose:()=>setModalTask(null)},e("div",{style:{background:"#fff",borderRadius:12,padding:16,width:"calc(100% - 24px)",maxWidth:560,boxSizing:"border-box",boxShadow:"0 20px 60px rgba(0,0,0,.2)",margin:"16px auto"}},
       e("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}},
         e("h3",{style:{fontSize:16,fontWeight:700,margin:0}},"Edit Task"),
@@ -749,7 +749,7 @@ function App(){
       },"Sign in & Save")
     ),
     topNav,
-    mainContent,
+    modalTask ? null : mainContent,
     modal,
     addProjectModal,
     importModal
