@@ -6,6 +6,7 @@
   <title>RRR Task Manager</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <style>
+    #rrr-ver{position:fixed;right:6px;bottom:2px;font:10px sans-serif;color:#94A3B8;z-index:5;pointer-events:none}
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:'Inter',system-ui,sans-serif;background:#F8FAFC;color:#1E293B}
     #root{min-height:100vh}
@@ -25,6 +26,24 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 <script>
+// ---- debug: show any uncaught error on screen, with version label ----
+const BUILD_LABEL = "build 24Nov-C";
+(function(){
+  function show(msg){
+    try{
+      let bar=document.getElementById("rrr-err");
+      if(!bar){
+        bar=document.createElement("div"); bar.id="rrr-err";
+        bar.style.cssText="position:fixed;left:0;right:0;bottom:0;z-index:99999;background:#7F1D1D;color:#fff;font:12px/1.4 sans-serif;padding:8px 12px;max-height:35vh;overflow:auto;word-break:break-word";
+        bar.onclick=function(){ bar.remove(); };
+        document.body.appendChild(bar);
+      }
+      bar.textContent="(tap to dismiss) ERROR: "+msg+" — "+BUILD_LABEL;
+    }catch(ex){}
+  }
+  window.addEventListener("error",function(ev){ show((ev.message||"error")+(ev.lineno?" (line "+ev.lineno+")":"")); });
+  window.addEventListener("unhandledrejection",function(ev){ show("promise: "+((ev.reason&&ev.reason.message)||ev.reason)); });
+})();
 const e = React.createElement;
 const CLIENT_ID = "610736844681-t0p32thbogua2rtuvn7niavpnnukjbd3.apps.googleusercontent.com";
 const FILE_NAME = "rrr_project_tasks.json";
@@ -740,5 +759,6 @@ function App(){
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(e(App));
 </script>
+<div id="rrr-ver"></div><script>document.getElementById("rrr-ver").textContent=BUILD_LABEL;</script>
 </body>
 </html>
